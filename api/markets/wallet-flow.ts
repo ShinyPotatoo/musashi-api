@@ -3,6 +3,7 @@ import type { Market } from '../../src/types/market';
 import type { MarketWalletFlow, WalletActivity } from '../../src/types/wallet';
 import { getMarketMetadata, getMarkets } from '../lib/market-cache';
 import {
+  type CachedMarketWalletFlow,
   getCachedMarketWalletFlow,
   getMarketWalletFlowKey,
   getStaleWalletMemoryCache,
@@ -17,6 +18,10 @@ const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 100;
 const DEFAULT_WINDOW: MarketWalletFlow['window'] = '24h';
 const VALID_WINDOWS = new Set(['1h', '24h', '7d']);
+
+interface ParseError {
+  error: string;
+}
 
 interface MarketWalletFlowFilters {
   marketId?: string;
@@ -101,21 +106,29 @@ export default async function handler(
       res.setHeader('Cache-Control', 's-maxage=30, stale-while-revalidate=60');
       res.status(200).json(buildResponse(
         filters,
-        cached.data,
-        cached.data.largeTrades,
-        null,
-        null,
-        null,
+        cached.data.flow,
+        cached.data.activity,
+        cached.data.market ?? null,
+        cached.data.matchConfidence,
+        cached.data.flowAgreesWithPriceMove,
         startTime,
         true,
         cached.cached_at,
         cached.cache_age_seconds,
+        cached.data.activitiesAnalyzed,
       ));
       return;
     }
 
     const result = await getMarketWalletFlow(filters, markets);
-    await setCachedMarketWalletFlow(cacheId, filters.window, result.flow);
+    await setCachedMarketWalletFlow(cacheId, filters.window, {
+      flow: result.flow,
+      activity: result.activity,
+      market: result.market ?? null,
+      matchConfidence: result.matchConfidence,
+      flowAgreesWithPriceMove: result.flowAgreesWithPriceMove,
+      activitiesAnalyzed: result.activitiesAnalyzed,
+    });
 
     res.setHeader('Cache-Control', 's-maxage=30, stale-while-revalidate=60');
     res.status(200).json(buildResponse(
@@ -137,15 +150,16 @@ export default async function handler(
       res.setHeader('Cache-Control', 's-maxage=15, stale-while-revalidate=60');
       res.status(200).json(buildResponse(
         fallback.filters,
-        fallback.flow,
-        fallback.flow.largeTrades,
-        null,
-        null,
-        null,
+        fallback.cached.data.flow,
+        fallback.cached.data.activity,
+        fallback.cached.data.market ?? null,
+        fallback.cached.data.matchConfidence,
+        fallback.cached.data.flowAgreesWithPriceMove,
         startTime,
         true,
-        fallback.cachedAt,
-        fallback.cacheAgeSeconds,
+        fallback.cached.cached_at,
+        fallback.cached.cache_age_seconds,
+        fallback.cached.data.activitiesAnalyzed,
       ));
       return;
     }
@@ -178,9 +192,9 @@ function parseFilters(req: VercelRequest): MarketWalletFlowFilters | { error: st
     return { error: 'Missing market identity. Use marketId, conditionId, tokenId, or query.' };
   }
 
-  const window = parseWindow(getSingleQueryValue(req.query.window));
-  if (typeof window === 'string') {
-    return { error: window };
+  const windowResult = parseWindow(getSingleQueryValue(req.query.window));
+  if (isParseError(windowResult)) {
+    return windowResult;
   }
 
   const limit = parseLimit(getSingleQueryValue(req.query.limit));
@@ -193,7 +207,7 @@ function parseFilters(req: VercelRequest): MarketWalletFlowFilters | { error: st
     conditionId,
     tokenId,
     query,
-    window,
+    window: windowResult,
     limit,
   };
 }
@@ -266,9 +280,11 @@ async function loadMarketsForFilters(filters: MarketWalletFlowFilters): Promise<
 
 async function getStaleFlow(req: VercelRequest): Promise<{
   filters: MarketWalletFlowFilters;
-  flow: MarketWalletFlow;
-  cachedAt: string | null;
-  cacheAgeSeconds: number | null;
+  cached: {
+    data: CachedMarketWalletFlow;
+    cached_at: string | null;
+    cache_age_seconds: number | null;
+  };
 } | null> {
   const filters = parseFilters(req);
   if ('error' in filters) return null;
@@ -277,21 +293,19 @@ async function getStaleFlow(req: VercelRequest): Promise<{
   if (!cacheId) return null;
 
   const key = getMarketWalletFlowKey(cacheId, filters.window);
-  const stale = getStaleWalletMemoryCache<MarketWalletFlow>(key);
+  const stale = getStaleWalletMemoryCache<CachedMarketWalletFlow>(key);
   if (!stale) return null;
 
   return {
     filters,
-    flow: stale.data,
-    cachedAt: stale.cached_at,
-    cacheAgeSeconds: stale.cache_age_seconds,
+    cached: stale,
   };
 }
 
-function parseWindow(value: string | undefined): MarketWalletFlow['window'] | string {
+function parseWindow(value: string | undefined): MarketWalletFlow['window'] | ParseError {
   if (value === undefined) return DEFAULT_WINDOW;
   if (!VALID_WINDOWS.has(value)) {
-    return 'Invalid window. Must be one of 1h, 24h, or 7d.';
+    return { error: 'Invalid window. Must be one of 1h, 24h, or 7d.' };
   }
   return value as MarketWalletFlow['window'];
 }
@@ -313,6 +327,10 @@ function parseLimit(value: string | undefined): number | string {
 
 function isClientError(message: string): boolean {
   return message.includes('Missing market identity') || message.includes('Could not resolve market');
+}
+
+function isParseError(value: unknown): value is ParseError {
+  return typeof value === 'object' && value !== null && 'error' in value;
 }
 
 function getSingleQueryValue(value: string | string[] | undefined): string | undefined {

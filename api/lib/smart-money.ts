@@ -20,13 +20,24 @@ export interface SmartMoneyMarketsInput {
 export interface SmartMoneyMarketsResult {
   markets: SmartMoneyMarket[];
   candidatesAnalyzed: number;
+  candidatesAttempted: number;
   flowResults: number;
+  timedOut: boolean;
 }
 
-const DEFAULT_CANDIDATE_LIMIT = parsePositiveInt(process.env.SMART_MONEY_CANDIDATE_LIMIT, 40);
-const MAX_CANDIDATE_LIMIT = parsePositiveInt(process.env.SMART_MONEY_MAX_CANDIDATES, 100);
-const DEFAULT_FLOW_LIMIT = parsePositiveInt(process.env.SMART_MONEY_FLOW_ACTIVITY_LIMIT, 50);
-const FLOW_BATCH_SIZE = parsePositiveInt(process.env.SMART_MONEY_FLOW_BATCH_SIZE, 5);
+interface FlowCollectionResult {
+  rows: Array<{ market: Market; flow: MarketWalletFlow }>;
+  candidatesAttempted: number;
+  timedOut: boolean;
+}
+
+const DEFAULT_CANDIDATE_LIMIT = parsePositiveInt(process.env.SMART_MONEY_CANDIDATE_LIMIT, 12);
+const MAX_CANDIDATE_LIMIT = parsePositiveInt(process.env.SMART_MONEY_MAX_CANDIDATES, 30);
+const DEFAULT_FLOW_LIMIT = parsePositiveInt(process.env.SMART_MONEY_FLOW_ACTIVITY_LIMIT, 20);
+const FLOW_BATCH_SIZE = parsePositiveInt(process.env.SMART_MONEY_FLOW_BATCH_SIZE, 3);
+const FLOW_REQUEST_TIMEOUT_MS = parsePositiveInt(process.env.SMART_MONEY_FLOW_TIMEOUT_MS, 1200);
+const TIME_BUDGET_MS = parsePositiveInt(process.env.SMART_MONEY_TIME_BUDGET_MS, 3500);
+const MIN_REQUEST_TIMEOUT_MS = 500;
 
 /**
  * Rank Polymarket markets by recent smart-wallet flow.
@@ -39,7 +50,8 @@ export async function getSmartMoneyMarkets(
   input: SmartMoneyMarketsInput,
 ): Promise<SmartMoneyMarketsResult> {
   const candidates = selectCandidates(allMarkets, input);
-  const flowResults = await collectMarketFlows(candidates, input);
+  const flowCollection = await collectMarketFlows(candidates, input);
+  const flowResults = flowCollection.rows;
   const ranked = flowResults
     .map(({ market, flow }) => toSmartMoneyMarket(market, flow))
     .filter((market): market is SmartMoneyMarket =>
@@ -51,7 +63,9 @@ export async function getSmartMoneyMarkets(
   return {
     markets: ranked,
     candidatesAnalyzed: candidates.length,
+    candidatesAttempted: flowCollection.candidatesAttempted,
     flowResults: flowResults.length,
+    timedOut: flowCollection.timedOut,
   };
 }
 
@@ -69,18 +83,33 @@ function selectCandidates(markets: Market[], input: SmartMoneyMarketsInput): Mar
 async function collectMarketFlows(
   candidates: Market[],
   input: SmartMoneyMarketsInput,
-): Promise<Array<{ market: Market; flow: MarketWalletFlow }>> {
+): Promise<FlowCollectionResult> {
   const rows: Array<{ market: Market; flow: MarketWalletFlow }> = [];
   const flowLimit = normalizeFlowLimit(input.flowLimit);
+  const deadline = Date.now() + TIME_BUDGET_MS;
+  let candidatesAttempted = 0;
+  let timedOut = false;
 
   for (let index = 0; index < candidates.length; index += FLOW_BATCH_SIZE) {
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= MIN_REQUEST_TIMEOUT_MS) {
+      timedOut = true;
+      break;
+    }
+
     const batch = candidates.slice(index, index + FLOW_BATCH_SIZE);
+    candidatesAttempted += batch.length;
+    const timeoutMs = Math.max(
+      MIN_REQUEST_TIMEOUT_MS,
+      Math.min(FLOW_REQUEST_TIMEOUT_MS, remainingMs),
+    );
     const settled = await Promise.allSettled(
       batch.map(async market => {
         const result = await getMarketWalletFlow({
           marketId: market.id,
           window: input.window,
           limit: flowLimit,
+          timeoutMs,
         }, candidates);
         return { market, flow: result.flow };
       }),
@@ -93,7 +122,11 @@ async function collectMarketFlows(
     }
   }
 
-  return rows;
+  return {
+    rows,
+    candidatesAttempted,
+    timedOut,
+  };
 }
 
 function toSmartMoneyMarket(market: Market, flow: MarketWalletFlow): SmartMoneyMarket | null {

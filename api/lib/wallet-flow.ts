@@ -15,6 +15,8 @@ export interface MarketWalletFlowInput {
   window: MarketWalletFlow['window'];
   /** Activity row limit. */
   limit: number;
+  /** Optional per-request upstream timeout in milliseconds. */
+  timeoutMs?: number;
 }
 
 export interface MarketWalletFlowResult {
@@ -73,6 +75,7 @@ export async function getMarketWalletFlow(
     limit: input.limit,
     since: getWindowStart(input.window),
     type: 'TRADE',
+    timeoutMs: input.timeoutMs,
   });
   const flow = aggregateWalletFlow(activity, input.window, resolved);
 

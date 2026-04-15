@@ -58,6 +58,8 @@ export interface FetchWalletActivityOptions {
   sortBy?: PolymarketActivitySortBy;
   /** Upstream sort direction. */
   sortDirection?: PolymarketSortDirection;
+  /** Per-request timeout in milliseconds. */
+  timeoutMs?: number;
 }
 
 export interface FetchWalletPositionsOptions {
@@ -75,6 +77,8 @@ export interface FetchWalletPositionsOptions {
   sortBy?: PolymarketPositionSortBy;
   /** Upstream sort direction. */
   sortDirection?: PolymarketSortDirection;
+  /** Per-request timeout in milliseconds. */
+  timeoutMs?: number;
 }
 
 export interface FetchWalletValueOptions {
@@ -99,6 +103,8 @@ export interface FetchMarketActivityOptions {
   sortBy?: PolymarketActivitySortBy;
   /** Upstream sort direction. */
   sortDirection?: PolymarketSortDirection;
+  /** Per-request timeout in milliseconds. */
+  timeoutMs?: number;
 }
 
 /**
@@ -125,7 +131,7 @@ export async function fetchWalletActivity(
   appendUnixTimestampParam(params, 'start', options.since);
   appendUnixTimestampParam(params, 'end', options.until);
 
-  const data = await fetchPolymarketArray('/activity', params);
+  const data = await fetchPolymarketArray('/activity', params, options.timeoutMs);
   return data
     .map(item => toWalletActivity(item, wallet))
     .filter((item): item is WalletActivity => item !== null);
@@ -153,7 +159,7 @@ export async function fetchWalletPositions(
   appendCsvParam(params, 'market', options.market);
 
   const fetchedAt = new Date().toISOString();
-  const data = await fetchPolymarketArray('/positions', params);
+  const data = await fetchPolymarketArray('/positions', params, options.timeoutMs);
   const positions = data
     .map(item => toWalletPosition(item, wallet, fetchedAt))
     .filter((item): item is WalletPosition => item !== null);
@@ -214,7 +220,7 @@ export async function fetchMarketActivity(
   appendUnixTimestampParam(params, 'start', options.since);
   appendUnixTimestampParam(params, 'end', options.until);
 
-  const data = await fetchPolymarketArray('/activity', params);
+  const data = await fetchPolymarketArray('/activity', params, options.timeoutMs);
   return data
     .map(item => toWalletActivity(item, ''))
     .filter((item): item is WalletActivity => item !== null);
@@ -229,10 +235,11 @@ export async function fetchMarketActivity(
 async function fetchPolymarketArray(
   path: string,
   params: URLSearchParams,
+  timeoutMs = FETCH_TIMEOUT_MS,
 ): Promise<unknown[]> {
   const url = buildUrl(path, params);
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
     const response = await fetch(url, {
@@ -254,7 +261,7 @@ async function fetchPolymarketArray(
     return data;
   } catch (error) {
     if (error instanceof Error && error.name === 'AbortError') {
-      throw new Error(`Polymarket Data API ${path} timed out after ${FETCH_TIMEOUT_MS}ms`);
+      throw new Error(`Polymarket Data API ${path} timed out after ${timeoutMs}ms`);
     }
 
     throw error;

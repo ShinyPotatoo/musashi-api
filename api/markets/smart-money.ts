@@ -15,6 +15,10 @@ const DEFAULT_MIN_VOLUME = 0;
 const DEFAULT_WINDOW: MarketWalletFlow['window'] = '24h';
 const VALID_WINDOWS = new Set(['1h', '24h', '7d']);
 
+interface ParseError {
+  error: string;
+}
+
 interface SmartMoneyMarketsFilters {
   category?: string;
   window: MarketWalletFlow['window'];
@@ -37,7 +41,9 @@ interface SmartMoneyMarketsResponse {
     cached_at?: string | null;
     cache_age_seconds: number | null;
     candidates_analyzed: number;
+    candidates_attempted: number;
     flow_results: number;
+    timed_out: boolean;
     data_age_seconds?: number;
     fetched_at?: string;
     sources?: Record<string, unknown>;
@@ -95,7 +101,9 @@ export default async function handler(
         cached.cached_at,
         cached.cache_age_seconds,
         0,
+        0,
         cached.data.length,
+        false,
       ));
       return;
     }
@@ -127,7 +135,9 @@ export default async function handler(
       null,
       null,
       result.candidatesAnalyzed,
+      result.candidatesAttempted,
       result.flowResults,
+      result.timedOut,
     ));
   } catch (error) {
     const fallback = getStaleSmartMoneyMarkets(req);
@@ -141,7 +151,9 @@ export default async function handler(
         fallback.cachedAt,
         fallback.cacheAgeSeconds,
         0,
+        0,
         fallback.markets.length,
+        false,
       ));
       return;
     }
@@ -165,9 +177,9 @@ export default async function handler(
 function parseFilters(req: VercelRequest): SmartMoneyMarketsFilters | { error: string } {
   const category = getSingleQueryValue(req.query.category)?.trim();
 
-  const window = parseWindow(getSingleQueryValue(req.query.window));
-  if (typeof window === 'string') {
-    return { error: window };
+  const windowResult = parseWindow(getSingleQueryValue(req.query.window));
+  if (isParseError(windowResult)) {
+    return windowResult;
   }
 
   const minVolume = parseMinVolume(getSingleQueryValue(req.query.minVolume));
@@ -182,7 +194,7 @@ function parseFilters(req: VercelRequest): SmartMoneyMarketsFilters | { error: s
 
   return {
     category: category || undefined,
-    window,
+    window: windowResult,
     minVolume,
     limit,
   };
@@ -208,7 +220,9 @@ function buildResponse(
   cachedAt: string | null,
   cacheAgeSeconds: number | null,
   candidatesAnalyzed: number,
+  candidatesAttempted: number,
   flowResults: number,
+  timedOut: boolean,
 ): SmartMoneyMarketsResponse {
   const freshness = getMarketMetadata();
 
@@ -227,7 +241,9 @@ function buildResponse(
       cached_at: cachedAt,
       cache_age_seconds: cacheAgeSeconds,
       candidates_analyzed: candidatesAnalyzed,
+      candidates_attempted: candidatesAttempted,
       flow_results: flowResults,
+      timed_out: timedOut,
       data_age_seconds: freshness.data_age_seconds,
       fetched_at: freshness.fetched_at,
       sources: freshness.sources,
@@ -261,12 +277,16 @@ function getStaleSmartMoneyMarkets(req: VercelRequest): {
   };
 }
 
-function parseWindow(value: string | undefined): MarketWalletFlow['window'] | string {
+function parseWindow(value: string | undefined): MarketWalletFlow['window'] | ParseError {
   if (value === undefined) return DEFAULT_WINDOW;
   if (!VALID_WINDOWS.has(value)) {
-    return 'Invalid window. Must be one of 1h, 24h, or 7d.';
+    return { error: 'Invalid window. Must be one of 1h, 24h, or 7d.' };
   }
   return value as MarketWalletFlow['window'];
+}
+
+function isParseError(value: unknown): value is ParseError {
+  return typeof value === 'object' && value !== null && 'error' in value;
 }
 
 function parseMinVolume(value: string | undefined): number | string {

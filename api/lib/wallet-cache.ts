@@ -11,6 +11,7 @@ import type {
   WalletActivity,
   WalletPosition,
 } from '../../src/types/wallet';
+import type { Market } from '../../src/types/market';
 import { kv, setKvWithTtl } from './vercel-kv';
 
 export const WALLET_ACTIVITY_TTL_SECONDS = parsePositiveInt(
@@ -44,6 +45,15 @@ export interface WalletCacheHit<T> {
   cached: boolean;
   cached_at: string | null;
   cache_age_seconds: number | null;
+}
+
+export interface CachedMarketWalletFlow {
+  flow: MarketWalletFlow;
+  activity: WalletActivity[];
+  market: Market | null;
+  matchConfidence?: number;
+  flowAgreesWithPriceMove: boolean | null;
+  activitiesAnalyzed: number;
 }
 
 const memoryCache = new Map<string, {
@@ -156,8 +166,8 @@ export async function setCachedWalletValue(
 export async function getCachedMarketWalletFlow(
   marketId: string,
   window: MarketWalletFlow['window'],
-): Promise<WalletCacheHit<MarketWalletFlow> | null> {
-  return getWalletCache<MarketWalletFlow>(getMarketWalletFlowKey(marketId, window));
+): Promise<WalletCacheHit<CachedMarketWalletFlow> | null> {
+  return getWalletCache<CachedMarketWalletFlow>(getMarketWalletFlowKey(marketId, window));
 }
 
 /**
@@ -170,8 +180,8 @@ export async function getCachedMarketWalletFlow(
 export async function setCachedMarketWalletFlow(
   marketId: string,
   window: MarketWalletFlow['window'],
-  flow: MarketWalletFlow,
-): Promise<WalletCacheEntry<MarketWalletFlow>> {
+  flow: CachedMarketWalletFlow,
+): Promise<WalletCacheEntry<CachedMarketWalletFlow>> {
   return setWalletCache(
     getMarketWalletFlowKey(marketId, window),
     flow,
@@ -262,7 +272,7 @@ export function getMarketWalletFlowKey(
   marketId: string,
   window: MarketWalletFlow['window'],
 ): string {
-  return `market:wallet_flow:${normalizeKeyPart(marketId)}:${window}`;
+  return `market:wallet_flow:v2:${normalizeKeyPart(marketId)}:${window}`;
 }
 
 /**
