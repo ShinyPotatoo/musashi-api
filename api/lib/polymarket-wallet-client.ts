@@ -82,6 +82,25 @@ export interface FetchWalletValueOptions {
   market?: string | string[];
 }
 
+export interface FetchMarketActivityOptions {
+  /** Max activity rows to request. */
+  limit?: number;
+  /** Pagination offset from Polymarket. */
+  offset?: number;
+  /** ISO timestamp lower bound. */
+  since?: string;
+  /** ISO timestamp upper bound. */
+  until?: string;
+  /** Polymarket activity types to include. */
+  type?: PolymarketActivityApiType | PolymarketActivityApiType[];
+  /** Trade side filter. */
+  side?: PolymarketActivitySide;
+  /** Upstream sort field. */
+  sortBy?: PolymarketActivitySortBy;
+  /** Upstream sort direction. */
+  sortDirection?: PolymarketSortDirection;
+}
+
 /**
  * Fetch recent on-chain wallet activity from Polymarket's public Data API.
  *
@@ -173,6 +192,35 @@ export async function fetchWalletValue(
 }
 
 /**
+ * Fetch recent public activity for a Polymarket market.
+ *
+ * @param market Condition id or token id accepted by Polymarket's Data API.
+ * @param options Optional upstream filters and pagination.
+ */
+export async function fetchMarketActivity(
+  market: string,
+  options: FetchMarketActivityOptions = {},
+): Promise<WalletActivity[]> {
+  const params = new URLSearchParams({
+    market,
+    limit: normalizeInteger(options.limit, 100, 1, 500).toString(),
+    offset: normalizeInteger(options.offset, 0, 0, 10000).toString(),
+    sortBy: options.sortBy || 'TIMESTAMP',
+    sortDirection: options.sortDirection || 'DESC',
+  });
+
+  appendCsvParam(params, 'type', options.type);
+  if (options.side) params.set('side', options.side);
+  appendUnixTimestampParam(params, 'start', options.since);
+  appendUnixTimestampParam(params, 'end', options.until);
+
+  const data = await fetchPolymarketArray('/activity', params);
+  return data
+    .map(item => toWalletActivity(item, ''))
+    .filter((item): item is WalletActivity => item !== null);
+}
+
+/**
  * Fetch a Data API endpoint and require an array response.
  *
  * @param path Data API path such as /activity.
@@ -221,7 +269,10 @@ function toWalletActivity(item: unknown, requestedWallet: string): WalletActivit
   const timestamp = getIsoTimestamp(item.timestamp);
   if (!timestamp) return null;
 
-  const wallet = normalizeWallet(getString(item.proxyWallet) || requestedWallet);
+  const rawWallet = getString(item.proxyWallet) || requestedWallet;
+  if (!rawWallet) return null;
+
+  const wallet = normalizeWallet(rawWallet);
   const conditionId = getString(item.conditionId);
   const tokenId = getString(item.asset);
   const marketSlug = getString(item.slug);

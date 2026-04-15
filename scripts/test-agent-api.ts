@@ -3,7 +3,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
-import test, { before, type TestContext } from 'node:test';
+import test, { before, describe, type TestContext } from 'node:test';
 
 type Level = 'pass' | 'warn' | 'fail';
 
@@ -27,6 +27,7 @@ const ADMIN_KEY = process.env.API_USAGE_ADMIN_KEY;
 const VERCEL_AUTOMATION_BYPASS_SECRET = process.env.VERCEL_AUTOMATION_BYPASS_SECRET;
 const CLIENT_ID = process.env.MUSASHI_TEST_CLIENT_ID || `agent-api-test-${Date.now()}`;
 const TEST_WALLET = process.env.MUSASHI_TEST_WALLET || '0x0000000000000000000000000000000000000000';
+const TEST_MARKET_ID = process.env.MUSASHI_TEST_MARKET_ID || 'polymarket-test-market';
 const TIMEOUT_MS = readIntEnv('MUSASHI_TEST_TIMEOUT_MS', 15000);
 const LATENCY_SAMPLE_SIZE = readIntEnv('MUSASHI_TEST_LATENCY_SAMPLES', 20);
 const INCLUDE_PERF =
@@ -56,79 +57,111 @@ before(async () => {
   await logPreviewBootstrap();
 });
 
-test('health endpoint contract', testOptions(), runAgentApiCase(testHealthEndpoint));
-test('sdk health smoke test', testOptions(), runAgentApiCase(testSdkHealth));
-test('health response headers', testOptions(), runAgentApiCase(testHealthHeaders));
-test('method matrix for public endpoints', testOptions(), runAgentApiCase(testMethodMatrix));
-test('analyze-text OPTIONS preflight', testOptions(), runAgentApiCase(testAnalyzeTextOptions));
-test('analyze-text happy path', testOptions(), runAgentApiCase(testAnalyzeTextHappyPath));
-test('analyze-text accepts no-match text gracefully', testOptions(), runAgentApiCase(testAnalyzeTextNoMatch));
-test('analyze-text rejects GET', testOptions(), runAgentApiCase(testAnalyzeTextMethodGuard));
-test('analyze-text rejects missing text', testOptions(), runAgentApiCase(testAnalyzeTextMissingText));
-test('analyze-text rejects empty string', testOptions(), runAgentApiCase(testAnalyzeTextEmptyString));
-test('analyze-text handles whitespace-only text safely', testOptions(), runAgentApiCase(testAnalyzeTextWhitespaceOnly));
-test('analyze-text rejects null body payload', testOptions(), runAgentApiCase(testAnalyzeTextNullBody));
-test('analyze-text rejects array body payload', testOptions(), runAgentApiCase(testAnalyzeTextArrayBody));
-test('analyze-text rejects object text payload', testOptions(), runAgentApiCase(testAnalyzeTextObjectText));
-test('analyze-text rejects NaN minConfidence', testOptions(), runAgentApiCase(testAnalyzeTextNaNMinConfidence));
-test('analyze-text rejects Infinity minConfidence', testOptions(), runAgentApiCase(testAnalyzeTextInfinityMinConfidence));
-test('analyze-text rejects invalid minConfidence', testOptions(), runAgentApiCase(testAnalyzeTextInvalidMinConfidence));
-test('analyze-text rejects invalid maxResults', testOptions(), runAgentApiCase(testAnalyzeTextInvalidMaxResults));
-test('analyze-text rejects overlong text', testOptions(), runAgentApiCase(testAnalyzeTextOverlongText));
-test('analyze-text handles unicode and emoji safely', testOptions(), runAgentApiCase(testAnalyzeTextUnicodePayload));
-test('analyze-text handles control-character payload safely', testOptions(), runAgentApiCase(testAnalyzeTextControlChars));
-test('analyze-text handles html payload safely', testOptions(), runAgentApiCase(testAnalyzeTextHtmlPayload));
-test('analyze-text handles injection-like payload safely', testOptions(), runAgentApiCase(testAnalyzeTextInjectionPayload));
-test('analyze-text malformed json is rejected safely', testOptions(), runAgentApiCase(testAnalyzeTextMalformedJson));
-test('analyze-text wrong content-type is handled safely', testOptions(), runAgentApiCase(testAnalyzeTextWrongContentType));
-test('analyze-text form-urlencoded content-type is handled safely', testOptions(), runAgentApiCase(testAnalyzeTextFormUrlEncoded));
-test('arbitrage happy path', testOptions(), runAgentApiCase(testArbitrageHappyPath));
-test('arbitrage rejects invalid minSpread', testOptions(), runAgentApiCase(testArbitrageInvalidMinSpread));
-test('arbitrage rejects invalid minConfidence', testOptions(), runAgentApiCase(testArbitrageInvalidMinConfidence));
-test('arbitrage rejects invalid limit', testOptions(), runAgentApiCase(testArbitrageInvalidLimit));
-test('arbitrage handles duplicate query params safely', testOptions(), runAgentApiCase(testArbitrageDuplicateQueryParams));
-test('arbitrage category filter echoes correctly', testOptions(), runAgentApiCase(testArbitrageCategoryFilter));
-test('movers happy path', testOptions(), runAgentApiCase(testMoversHappyPath));
-test('movers rejects invalid minChange', testOptions(), runAgentApiCase(testMoversInvalidMinChange));
-test('movers rejects invalid limit', testOptions(), runAgentApiCase(testMoversInvalidLimit));
-test('movers category filter echoes correctly', testOptions(), runAgentApiCase(testMoversCategoryFilter));
-test('feed happy path', testOptions(), runAgentApiCase(testFeedHappyPath));
-test('feed rejects invalid category', testOptions(), runAgentApiCase(testFeedInvalidCategory));
-test('feed rejects invalid minUrgency', testOptions(), runAgentApiCase(testFeedInvalidMinUrgency));
-test('feed rejects invalid limit', testOptions(), runAgentApiCase(testFeedInvalidLimit));
-test('feed rejects invalid since timestamp', testOptions(), runAgentApiCase(testFeedInvalidSince));
-test('feed handles duplicate query params safely', testOptions(), runAgentApiCase(testFeedDuplicateQueryParams));
-test('feed cursor pagination is stable', testOptions(), runAgentApiCase(testFeedCursorPagination));
-test('feed repeated request stability', testOptions(), runAgentApiCase(testFeedRepeatedRequestStability));
-test('feed oversized client id is handled safely', testOptions(), runAgentApiCase(testFeedOversizedClientId));
-test('feed special client id is handled safely', testOptions(), runAgentApiCase(testFeedSpecialClientId));
-test('feed OPTIONS preflight', testOptions(), runAgentApiCase(testFeedOptions));
-test('feed stats happy path', testOptions(), runAgentApiCase(testFeedStatsHappyPath));
-test('feed accounts contract', testOptions(), runAgentApiCase(testFeedAccounts));
-test('wallet activity happy path', testOptions(), runAgentApiCase(testWalletActivityHappyPath));
-test('wallet activity rejects invalid wallet', testOptions(), runAgentApiCase(testWalletActivityInvalidWallet));
-test('wallet activity rejects invalid limit', testOptions(), runAgentApiCase(testWalletActivityInvalidLimit));
-test('wallet activity rejects invalid since', testOptions(), runAgentApiCase(testWalletActivityInvalidSince));
-test('wallet activity OPTIONS preflight', testOptions(), runAgentApiCase(testWalletActivityOptions));
-test('wallet positions happy path', testOptions(), runAgentApiCase(testWalletPositionsHappyPath));
-test('wallet positions rejects invalid wallet', testOptions(), runAgentApiCase(testWalletPositionsInvalidWallet));
-test('wallet positions rejects invalid limit', testOptions(), runAgentApiCase(testWalletPositionsInvalidLimit));
-test('wallet positions rejects invalid minValue', testOptions(), runAgentApiCase(testWalletPositionsInvalidMinValue));
-test('wallet positions OPTIONS preflight', testOptions(), runAgentApiCase(testWalletPositionsOptions));
-test('sdk wallet activity surfaces validation errors', testOptions(), runAgentApiCase(testSdkWalletActivityInvalidWallet));
-test('sdk wallet positions surfaces validation errors', testOptions(), runAgentApiCase(testSdkWalletPositionsInvalidWallet));
-test('cache-control headers are present on cacheable endpoints', testOptions(), runAgentApiCase(testCacheHeaders));
-test('error responses do not leak sensitive internals', testOptions(), runAgentApiCase(testErrorLeakage));
-test('usage audit endpoint reflects caller traffic', testOptions(ADMIN_KEY_REQUIRED_SKIP), runAgentApiCase(testUsageAudit));
-test('usage audit rejects invalid admin key', testOptions(ADMIN_KEY_REQUIRED_SKIP), runAgentApiCase(testUsageAuditInvalidAdminKey));
-test('usage audit bearer auth works or fails safely', testOptions(ADMIN_KEY_REQUIRED_SKIP), runAgentApiCase(testUsageAuditBearerAuth));
-test('usage audit handles mixed auth headers safely', testOptions(ADMIN_KEY_REQUIRED_SKIP), runAgentApiCase(testUsageAuditMixedHeaders));
-test('usage audit records caller traffic consistently', testOptions(ADMIN_KEY_REQUIRED_SKIP), runAgentApiCase(testUsageAuditConsistency));
-test('usage audit rejects missing admin key', testOptions(ADMIN_KEY_MISSING_SKIP), runAgentApiCase(testUsageAuditMissingAdminKey));
-test('warm latency benchmark', testOptions(PERF_SKIP), runAgentApiCase(testWarmLatencyBenchmark));
-test('best-effort cold start probe', testOptions(PERF_SKIP), runAgentApiCase(testColdStartProbe));
-test('concurrent request stability', testOptions(STRESS_SKIP), runAgentApiCase(testConcurrentRequestStability));
-test('burst traffic stability', testOptions(STRESS_SKIP), runAgentApiCase(testBurstTrafficStability));
+describe('health', () => {
+  test('endpoint contract', testOptions(), runAgentApiCase(testHealthEndpoint));
+  test('sdk smoke test', testOptions(), runAgentApiCase(testSdkHealth));
+  test('response headers', testOptions(), runAgentApiCase(testHealthHeaders));
+  test('method matrix for public endpoints', testOptions(), runAgentApiCase(testMethodMatrix));
+});
+
+describe('analyze-text', () => {
+  test('OPTIONS preflight', testOptions(), runAgentApiCase(testAnalyzeTextOptions));
+  test('happy path', testOptions(), runAgentApiCase(testAnalyzeTextHappyPath));
+  test('accepts no-match text gracefully', testOptions(), runAgentApiCase(testAnalyzeTextNoMatch));
+  test('rejects GET', testOptions(), runAgentApiCase(testAnalyzeTextMethodGuard));
+  test('rejects missing text', testOptions(), runAgentApiCase(testAnalyzeTextMissingText));
+  test('rejects empty string', testOptions(), runAgentApiCase(testAnalyzeTextEmptyString));
+  test('handles whitespace-only text safely', testOptions(), runAgentApiCase(testAnalyzeTextWhitespaceOnly));
+  test('rejects null body payload', testOptions(), runAgentApiCase(testAnalyzeTextNullBody));
+  test('rejects array body payload', testOptions(), runAgentApiCase(testAnalyzeTextArrayBody));
+  test('rejects object text payload', testOptions(), runAgentApiCase(testAnalyzeTextObjectText));
+  test('rejects NaN minConfidence', testOptions(), runAgentApiCase(testAnalyzeTextNaNMinConfidence));
+  test('rejects Infinity minConfidence', testOptions(), runAgentApiCase(testAnalyzeTextInfinityMinConfidence));
+  test('rejects invalid minConfidence', testOptions(), runAgentApiCase(testAnalyzeTextInvalidMinConfidence));
+  test('rejects invalid maxResults', testOptions(), runAgentApiCase(testAnalyzeTextInvalidMaxResults));
+  test('rejects overlong text', testOptions(), runAgentApiCase(testAnalyzeTextOverlongText));
+  test('handles unicode and emoji safely', testOptions(), runAgentApiCase(testAnalyzeTextUnicodePayload));
+  test('handles control-character payload safely', testOptions(), runAgentApiCase(testAnalyzeTextControlChars));
+  test('handles html payload safely', testOptions(), runAgentApiCase(testAnalyzeTextHtmlPayload));
+  test('handles injection-like payload safely', testOptions(), runAgentApiCase(testAnalyzeTextInjectionPayload));
+  test('malformed json is rejected safely', testOptions(), runAgentApiCase(testAnalyzeTextMalformedJson));
+  test('wrong content-type is handled safely', testOptions(), runAgentApiCase(testAnalyzeTextWrongContentType));
+  test('form-urlencoded content-type is handled safely', testOptions(), runAgentApiCase(testAnalyzeTextFormUrlEncoded));
+});
+
+describe('markets', () => {
+  test('arbitrage happy path', testOptions(), runAgentApiCase(testArbitrageHappyPath));
+  test('arbitrage rejects invalid minSpread', testOptions(), runAgentApiCase(testArbitrageInvalidMinSpread));
+  test('arbitrage rejects invalid minConfidence', testOptions(), runAgentApiCase(testArbitrageInvalidMinConfidence));
+  test('arbitrage rejects invalid limit', testOptions(), runAgentApiCase(testArbitrageInvalidLimit));
+  test('arbitrage handles duplicate query params safely', testOptions(), runAgentApiCase(testArbitrageDuplicateQueryParams));
+  test('arbitrage category filter echoes correctly', testOptions(), runAgentApiCase(testArbitrageCategoryFilter));
+  test('movers happy path', testOptions(), runAgentApiCase(testMoversHappyPath));
+  test('movers rejects invalid minChange', testOptions(), runAgentApiCase(testMoversInvalidMinChange));
+  test('movers rejects invalid limit', testOptions(), runAgentApiCase(testMoversInvalidLimit));
+  test('movers category filter echoes correctly', testOptions(), runAgentApiCase(testMoversCategoryFilter));
+  test('smart money markets happy path', testOptions(), runAgentApiCase(testSmartMoneyMarketsHappyPath));
+  test('smart money markets rejects invalid window', testOptions(), runAgentApiCase(testSmartMoneyMarketsInvalidWindow));
+  test('smart money markets rejects invalid minVolume', testOptions(), runAgentApiCase(testSmartMoneyMarketsInvalidMinVolume));
+  test('smart money markets rejects invalid limit', testOptions(), runAgentApiCase(testSmartMoneyMarketsInvalidLimit));
+  test('smart money markets OPTIONS preflight', testOptions(), runAgentApiCase(testSmartMoneyMarketsOptions));
+  test('sdk smart money markets surfaces validation errors', testOptions(), runAgentApiCase(testSdkSmartMoneyMarketsInvalidInput));
+  test('wallet flow happy path', testOptions(), runAgentApiCase(testMarketWalletFlowHappyPath));
+  test('wallet flow rejects missing identity', testOptions(), runAgentApiCase(testMarketWalletFlowMissingIdentity));
+  test('wallet flow rejects invalid window', testOptions(), runAgentApiCase(testMarketWalletFlowInvalidWindow));
+  test('wallet flow rejects invalid limit', testOptions(), runAgentApiCase(testMarketWalletFlowInvalidLimit));
+  test('wallet flow OPTIONS preflight', testOptions(), runAgentApiCase(testMarketWalletFlowOptions));
+  test('sdk wallet flow surfaces validation errors', testOptions(), runAgentApiCase(testSdkMarketWalletFlowInvalidInput));
+});
+
+describe('feed', () => {
+  test('happy path', testOptions(), runAgentApiCase(testFeedHappyPath));
+  test('rejects invalid category', testOptions(), runAgentApiCase(testFeedInvalidCategory));
+  test('rejects invalid minUrgency', testOptions(), runAgentApiCase(testFeedInvalidMinUrgency));
+  test('rejects invalid limit', testOptions(), runAgentApiCase(testFeedInvalidLimit));
+  test('rejects invalid since timestamp', testOptions(), runAgentApiCase(testFeedInvalidSince));
+  test('handles duplicate query params safely', testOptions(), runAgentApiCase(testFeedDuplicateQueryParams));
+  test('cursor pagination is stable', testOptions(), runAgentApiCase(testFeedCursorPagination));
+  test('repeated request stability', testOptions(), runAgentApiCase(testFeedRepeatedRequestStability));
+  test('oversized client id is handled safely', testOptions(), runAgentApiCase(testFeedOversizedClientId));
+  test('special client id is handled safely', testOptions(), runAgentApiCase(testFeedSpecialClientId));
+  test('OPTIONS preflight', testOptions(), runAgentApiCase(testFeedOptions));
+  test('stats happy path', testOptions(), runAgentApiCase(testFeedStatsHappyPath));
+  test('accounts contract', testOptions(), runAgentApiCase(testFeedAccounts));
+});
+
+describe('wallet', () => {
+  test('activity happy path', testOptions(), runAgentApiCase(testWalletActivityHappyPath));
+  test('activity rejects invalid wallet', testOptions(), runAgentApiCase(testWalletActivityInvalidWallet));
+  test('activity rejects invalid limit', testOptions(), runAgentApiCase(testWalletActivityInvalidLimit));
+  test('activity rejects invalid since', testOptions(), runAgentApiCase(testWalletActivityInvalidSince));
+  test('activity OPTIONS preflight', testOptions(), runAgentApiCase(testWalletActivityOptions));
+  test('positions happy path', testOptions(), runAgentApiCase(testWalletPositionsHappyPath));
+  test('positions rejects invalid wallet', testOptions(), runAgentApiCase(testWalletPositionsInvalidWallet));
+  test('positions rejects invalid limit', testOptions(), runAgentApiCase(testWalletPositionsInvalidLimit));
+  test('positions rejects invalid minValue', testOptions(), runAgentApiCase(testWalletPositionsInvalidMinValue));
+  test('positions OPTIONS preflight', testOptions(), runAgentApiCase(testWalletPositionsOptions));
+  test('sdk activity surfaces validation errors', testOptions(), runAgentApiCase(testSdkWalletActivityInvalidWallet));
+  test('sdk positions surfaces validation errors', testOptions(), runAgentApiCase(testSdkWalletPositionsInvalidWallet));
+});
+
+describe('reliability', () => {
+  test('cache-control headers are present on cacheable endpoints', testOptions(), runAgentApiCase(testCacheHeaders));
+  test('error responses do not leak sensitive internals', testOptions(), runAgentApiCase(testErrorLeakage));
+  test('warm latency benchmark', testOptions(PERF_SKIP), runAgentApiCase(testWarmLatencyBenchmark));
+  test('best-effort cold start probe', testOptions(PERF_SKIP), runAgentApiCase(testColdStartProbe));
+  test('concurrent request stability', testOptions(STRESS_SKIP), runAgentApiCase(testConcurrentRequestStability));
+  test('burst traffic stability', testOptions(STRESS_SKIP), runAgentApiCase(testBurstTrafficStability));
+});
+
+describe('usage-audit', () => {
+  test('endpoint reflects caller traffic', testOptions(ADMIN_KEY_REQUIRED_SKIP), runAgentApiCase(testUsageAudit));
+  test('rejects invalid admin key', testOptions(ADMIN_KEY_REQUIRED_SKIP), runAgentApiCase(testUsageAuditInvalidAdminKey));
+  test('bearer auth works or fails safely', testOptions(ADMIN_KEY_REQUIRED_SKIP), runAgentApiCase(testUsageAuditBearerAuth));
+  test('handles mixed auth headers safely', testOptions(ADMIN_KEY_REQUIRED_SKIP), runAgentApiCase(testUsageAuditMixedHeaders));
+  test('records caller traffic consistently', testOptions(ADMIN_KEY_REQUIRED_SKIP), runAgentApiCase(testUsageAuditConsistency));
+  test('rejects missing admin key', testOptions(ADMIN_KEY_MISSING_SKIP), runAgentApiCase(testUsageAuditMissingAdminKey));
+});
 
 function logRunConfig(): void {
   console.log(`Base URL: ${BASE_URL}`);
@@ -148,6 +181,11 @@ function runAgentApiCase(run: AgentApiTestCaseRun): (context: TestContext) => Pr
     try {
       const result = await run();
       context.diagnostic(`${result.level.toUpperCase()}: ${result.detail}`);
+
+      if (result.level === 'warn') {
+        context.skip(result.detail);
+        return;
+      }
 
       if (result.level === 'fail') {
         throw new Error(result.detail);
@@ -222,6 +260,7 @@ async function testMethodMatrix(): Promise<CaseResult> {
     { path: '/api/analyze-text', allowed: ['POST', 'OPTIONS'] as string[] },
     { path: '/api/markets/arbitrage', allowed: ['GET', 'OPTIONS'] as string[] },
     { path: '/api/markets/movers', allowed: ['GET', 'OPTIONS'] as string[] },
+    { path: '/api/markets/smart-money', allowed: ['GET', 'OPTIONS'] as string[], optional: true },
     { path: '/api/feed', allowed: ['GET', 'OPTIONS'] as string[] },
     { path: '/api/feed/stats', allowed: ['GET', 'OPTIONS'] as string[] },
     { path: '/api/feed/accounts', allowed: ['GET', 'OPTIONS'] as string[] },
@@ -234,6 +273,12 @@ async function testMethodMatrix(): Promise<CaseResult> {
     for (const method of methods) {
       const response = await request(endpoint.path, buildMethodMatrixRequest(method, endpoint.path));
       const allowed = endpoint.allowed.includes(method as 'GET' | 'POST' | 'OPTIONS');
+
+      if ('optional' in endpoint && endpoint.optional && response.status === 404) {
+        sawWarning = true;
+        notes.push(`${endpoint.path} not deployed`);
+        break;
+      }
 
       if (allowed) {
         if (![200, 204, 503].includes(response.status)) {
@@ -671,6 +716,142 @@ async function testMoversCategoryFilter(): Promise<CaseResult> {
   return pass(`returned ${response.json.data.count} crypto movers`);
 }
 
+async function testSmartMoneyMarketsHappyPath(): Promise<CaseResult> {
+  const response = await request('/api/markets/smart-money?category=crypto&window=24h&limit=3&minVolume=0');
+
+  const missing = warnIfEndpointNotDeployed(response, 'smart-money');
+  if (missing) return missing;
+  if (response.status === 503) return warn(extractError(response));
+
+  expect(response.status === 200, `expected 200, got ${response.status}`);
+  expect(response.json.success === true, 'smart-money success must be true');
+  validateSmartMoneyMarketsResponse(response);
+  expect(response.json.filters.category === 'crypto', 'smart-money category filter should echo crypto');
+  return pass(`returned ${response.json.data.count} smart-money market(s)`);
+}
+
+async function testSmartMoneyMarketsInvalidWindow(): Promise<CaseResult> {
+  const response = await request('/api/markets/smart-money?window=30d');
+  const missing = warnIfEndpointNotDeployed(response, 'smart-money');
+  if (missing) return missing;
+  expect(response.status === 400, `expected 400, got ${response.status}`);
+  assertNoSensitiveLeak(response, 'smart-money invalid window');
+  return pass(extractError(response));
+}
+
+async function testSmartMoneyMarketsInvalidMinVolume(): Promise<CaseResult> {
+  const response = await request('/api/markets/smart-money?minVolume=-1');
+  const missing = warnIfEndpointNotDeployed(response, 'smart-money');
+  if (missing) return missing;
+  expect(response.status === 400, `expected 400, got ${response.status}`);
+  assertNoSensitiveLeak(response, 'smart-money invalid minVolume');
+  return pass(extractError(response));
+}
+
+async function testSmartMoneyMarketsInvalidLimit(): Promise<CaseResult> {
+  const response = await request('/api/markets/smart-money?limit=0');
+  const missing = warnIfEndpointNotDeployed(response, 'smart-money');
+  if (missing) return missing;
+  expect(response.status === 400, `expected 400, got ${response.status}`);
+  assertNoSensitiveLeak(response, 'smart-money invalid limit');
+  return pass(extractError(response));
+}
+
+async function testSmartMoneyMarketsOptions(): Promise<CaseResult> {
+  const response = await request('/api/markets/smart-money', {
+    method: 'OPTIONS',
+  });
+
+  const missing = warnIfEndpointNotDeployed(response, 'smart-money');
+  if (missing) return missing;
+  expect([200, 204].includes(response.status), `expected 200 or 204, got ${response.status}`);
+  expect(
+    response.headers.get('access-control-allow-methods')?.includes('GET') === true,
+    'smart-money preflight should advertise GET',
+  );
+  return pass(`preflight status ${response.status}`);
+}
+
+async function testSdkSmartMoneyMarketsInvalidInput(): Promise<CaseResult> {
+  const agent = new MusashiAgent(BASE_URL);
+
+  try {
+    await agent.getSmartMoneyMarkets({ minVolume: -1 });
+  } catch (error) {
+    return pass(toErrorMessage(error));
+  }
+
+  return fail('sdk smart-money markets accepted invalid minVolume');
+}
+
+async function testMarketWalletFlowHappyPath(): Promise<CaseResult> {
+  const response = await request(`/api/markets/wallet-flow?marketId=${encodeURIComponent(TEST_MARKET_ID)}&window=24h&limit=5`);
+
+  const missing = warnIfEndpointNotDeployed(response, 'market wallet flow');
+  if (missing) return missing;
+  if (response.status === 503) return warn(extractError(response));
+  if (response.status === 400) return warn(extractError(response));
+
+  expect(response.status === 200, `expected 200, got ${response.status}`);
+  expect(response.json.success === true, 'market wallet flow success must be true');
+  validateMarketWalletFlowResponse(response);
+  return pass(`returned ${response.json.data.count} activity row(s)`);
+}
+
+async function testMarketWalletFlowMissingIdentity(): Promise<CaseResult> {
+  const response = await request('/api/markets/wallet-flow');
+  const missing = warnIfEndpointNotDeployed(response, 'market wallet flow');
+  if (missing) return missing;
+  expect(response.status === 400, `expected 400, got ${response.status}`);
+  assertNoSensitiveLeak(response, 'market wallet flow missing identity');
+  return pass(extractError(response));
+}
+
+async function testMarketWalletFlowInvalidWindow(): Promise<CaseResult> {
+  const response = await request(`/api/markets/wallet-flow?marketId=${encodeURIComponent(TEST_MARKET_ID)}&window=30d`);
+  const missing = warnIfEndpointNotDeployed(response, 'market wallet flow');
+  if (missing) return missing;
+  expect(response.status === 400, `expected 400, got ${response.status}`);
+  assertNoSensitiveLeak(response, 'market wallet flow invalid window');
+  return pass(extractError(response));
+}
+
+async function testMarketWalletFlowInvalidLimit(): Promise<CaseResult> {
+  const response = await request(`/api/markets/wallet-flow?marketId=${encodeURIComponent(TEST_MARKET_ID)}&limit=0`);
+  const missing = warnIfEndpointNotDeployed(response, 'market wallet flow');
+  if (missing) return missing;
+  expect(response.status === 400, `expected 400, got ${response.status}`);
+  assertNoSensitiveLeak(response, 'market wallet flow invalid limit');
+  return pass(extractError(response));
+}
+
+async function testMarketWalletFlowOptions(): Promise<CaseResult> {
+  const response = await request('/api/markets/wallet-flow', {
+    method: 'OPTIONS',
+  });
+
+  const missing = warnIfEndpointNotDeployed(response, 'market wallet flow');
+  if (missing) return missing;
+  expect([200, 204].includes(response.status), `expected 200 or 204, got ${response.status}`);
+  expect(
+    response.headers.get('access-control-allow-methods')?.includes('GET') === true,
+    'market wallet flow preflight should advertise GET',
+  );
+  return pass(`preflight status ${response.status}`);
+}
+
+async function testSdkMarketWalletFlowInvalidInput(): Promise<CaseResult> {
+  const agent = new MusashiAgent(BASE_URL);
+
+  try {
+    await agent.getMarketWalletFlow({ window: '24h' });
+  } catch (error) {
+    return pass(toErrorMessage(error));
+  }
+
+  return fail('sdk market wallet flow accepted missing market identity');
+}
+
 async function testFeedHappyPath(): Promise<CaseResult> {
   const response = await request('/api/feed?limit=3', {
     headers: {
@@ -848,6 +1029,8 @@ async function testFeedAccounts(): Promise<CaseResult> {
 async function testWalletActivityHappyPath(): Promise<CaseResult> {
   const response = await request(`/api/wallet/activity?wallet=${TEST_WALLET}&limit=1`);
 
+  const missing = warnIfEndpointNotDeployed(response, 'wallet activity');
+  if (missing) return missing;
   if (response.status === 503) return warn(extractError(response));
 
   expect(response.status === 200, `expected 200, got ${response.status}`);
@@ -858,6 +1041,8 @@ async function testWalletActivityHappyPath(): Promise<CaseResult> {
 
 async function testWalletActivityInvalidWallet(): Promise<CaseResult> {
   const response = await request('/api/wallet/activity?wallet=abc123');
+  const missing = warnIfEndpointNotDeployed(response, 'wallet activity');
+  if (missing) return missing;
   expect(response.status === 400, `expected 400, got ${response.status}`);
   assertNoSensitiveLeak(response, 'wallet activity invalid wallet');
   return pass(extractError(response));
@@ -865,6 +1050,8 @@ async function testWalletActivityInvalidWallet(): Promise<CaseResult> {
 
 async function testWalletActivityInvalidLimit(): Promise<CaseResult> {
   const response = await request(`/api/wallet/activity?wallet=${TEST_WALLET}&limit=0`);
+  const missing = warnIfEndpointNotDeployed(response, 'wallet activity');
+  if (missing) return missing;
   expect(response.status === 400, `expected 400, got ${response.status}`);
   assertNoSensitiveLeak(response, 'wallet activity invalid limit');
   return pass(extractError(response));
@@ -872,6 +1059,8 @@ async function testWalletActivityInvalidLimit(): Promise<CaseResult> {
 
 async function testWalletActivityInvalidSince(): Promise<CaseResult> {
   const response = await request(`/api/wallet/activity?wallet=${TEST_WALLET}&since=not-a-date`);
+  const missing = warnIfEndpointNotDeployed(response, 'wallet activity');
+  if (missing) return missing;
   expect(response.status === 400, `expected 400, got ${response.status}`);
   assertNoSensitiveLeak(response, 'wallet activity invalid since');
   return pass(extractError(response));
@@ -882,6 +1071,8 @@ async function testWalletActivityOptions(): Promise<CaseResult> {
     method: 'OPTIONS',
   });
 
+  const missing = warnIfEndpointNotDeployed(response, 'wallet activity');
+  if (missing) return missing;
   expect([200, 204].includes(response.status), `expected 200 or 204, got ${response.status}`);
   expect(
     response.headers.get('access-control-allow-methods')?.includes('GET') === true,
@@ -893,6 +1084,8 @@ async function testWalletActivityOptions(): Promise<CaseResult> {
 async function testWalletPositionsHappyPath(): Promise<CaseResult> {
   const response = await request(`/api/wallet/positions?wallet=${TEST_WALLET}&limit=1&minValue=0`);
 
+  const missing = warnIfEndpointNotDeployed(response, 'wallet positions');
+  if (missing) return missing;
   if (response.status === 503) return warn(extractError(response));
 
   expect(response.status === 200, `expected 200, got ${response.status}`);
@@ -903,6 +1096,8 @@ async function testWalletPositionsHappyPath(): Promise<CaseResult> {
 
 async function testWalletPositionsInvalidWallet(): Promise<CaseResult> {
   const response = await request('/api/wallet/positions?wallet=abc123');
+  const missing = warnIfEndpointNotDeployed(response, 'wallet positions');
+  if (missing) return missing;
   expect(response.status === 400, `expected 400, got ${response.status}`);
   assertNoSensitiveLeak(response, 'wallet positions invalid wallet');
   return pass(extractError(response));
@@ -910,6 +1105,8 @@ async function testWalletPositionsInvalidWallet(): Promise<CaseResult> {
 
 async function testWalletPositionsInvalidLimit(): Promise<CaseResult> {
   const response = await request(`/api/wallet/positions?wallet=${TEST_WALLET}&limit=101`);
+  const missing = warnIfEndpointNotDeployed(response, 'wallet positions');
+  if (missing) return missing;
   expect(response.status === 400, `expected 400, got ${response.status}`);
   assertNoSensitiveLeak(response, 'wallet positions invalid limit');
   return pass(extractError(response));
@@ -917,6 +1114,8 @@ async function testWalletPositionsInvalidLimit(): Promise<CaseResult> {
 
 async function testWalletPositionsInvalidMinValue(): Promise<CaseResult> {
   const response = await request(`/api/wallet/positions?wallet=${TEST_WALLET}&minValue=-1`);
+  const missing = warnIfEndpointNotDeployed(response, 'wallet positions');
+  if (missing) return missing;
   expect(response.status === 400, `expected 400, got ${response.status}`);
   assertNoSensitiveLeak(response, 'wallet positions invalid minValue');
   return pass(extractError(response));
@@ -927,6 +1126,8 @@ async function testWalletPositionsOptions(): Promise<CaseResult> {
     method: 'OPTIONS',
   });
 
+  const missing = warnIfEndpointNotDeployed(response, 'wallet positions');
+  if (missing) return missing;
   expect([200, 204].includes(response.status), `expected 200 or 204, got ${response.status}`);
   expect(
     response.headers.get('access-control-allow-methods')?.includes('GET') === true,
@@ -982,6 +1183,8 @@ async function testErrorLeakage(): Promise<CaseResult> {
     }),
     request('/api/feed?limit=-1'),
     request('/api/markets/arbitrage?minSpread=-1'),
+    request('/api/markets/smart-money?minVolume=-1'),
+    request('/api/markets/wallet-flow'),
     request('/api/wallet/activity?wallet=abc123'),
     request('/api/wallet/positions?wallet=abc123'),
   ]);
@@ -1486,6 +1689,12 @@ function warn(detail: string): CaseResult {
   return { level: 'warn', detail };
 }
 
+function warnIfEndpointNotDeployed(response: HttpResult, label: string): CaseResult | null {
+  return response.status === 404
+    ? warn(`${label} endpoint not deployed on this environment`)
+    : null;
+}
+
 function fail(detail: string): CaseResult {
   return { level: 'fail', detail };
 }
@@ -1621,6 +1830,55 @@ function validateMoversResponse(response: HttpResult): void {
     const current = Math.abs(movers[i].priceChange1h);
     expect(prev >= current, 'movers should be sorted by absolute priceChange1h descending');
   }
+}
+
+function validateSmartMoneyMarketsResponse(response: HttpResult): void {
+  expect(response.headers.get('content-type')?.includes('application/json') === true, 'smart-money content-type must be json');
+  expect(Array.isArray(response.json.data?.markets), 'smart-money markets must be an array');
+  expect(response.json.data.count === response.json.data.markets.length, 'smart-money count should match markets length');
+  expectIsoTimestamp(response.json.timestamp, 'smart-money timestamp must be valid ISO');
+  expect(['1h', '24h', '7d'].includes(response.json.filters?.window), 'smart-money window invalid');
+  expect(typeof response.json.filters?.minVolume === 'number', 'smart-money minVolume must be number');
+  expect(response.json.metadata?.source === 'polymarket', 'smart-money source must be polymarket');
+  expect(typeof response.json.metadata?.processing_time_ms === 'number', 'smart-money processing_time_ms must be number');
+  expect(typeof response.json.metadata?.cached === 'boolean', 'smart-money cached must be boolean');
+
+  const markets = response.json.data.markets as any[];
+  for (const market of markets) {
+    expect(typeof market.score === 'number', 'smart-money score must be number');
+    expect(typeof market.flow === 'object' && market.flow !== null, 'smart-money flow missing');
+    expect(typeof market.flow.walletCount === 'number', 'smart-money walletCount must be number');
+    expect(typeof market.flow.smartWalletCount === 'number', 'smart-money smartWalletCount must be number');
+    expect(typeof market.flow.buyVolume === 'number', 'smart-money buyVolume must be number');
+    expect(typeof market.flow.sellVolume === 'number', 'smart-money sellVolume must be number');
+    expect(typeof market.flow.netVolume === 'number', 'smart-money netVolume must be number');
+    expect(['YES', 'NO', 'mixed', 'unknown'].includes(market.flow.netDirection), 'smart-money netDirection invalid');
+  }
+
+  for (let i = 1; i < markets.length; i++) {
+    expect(markets[i - 1].score >= markets[i].score, 'smart-money markets should be sorted by score descending');
+  }
+}
+
+function validateMarketWalletFlowResponse(response: HttpResult): void {
+  expect(response.headers.get('content-type')?.includes('application/json') === true, 'wallet-flow content-type must be json');
+  expect(typeof response.json.data?.flow === 'object' && response.json.data.flow !== null, 'wallet-flow flow missing');
+  expect(Array.isArray(response.json.data?.activity), 'wallet-flow activity must be an array');
+  expect(response.json.data.count === response.json.data.activity.length, 'wallet-flow count should match activity length');
+  expectIsoTimestamp(response.json.timestamp, 'wallet-flow timestamp must be valid ISO');
+
+  const flow = response.json.data.flow;
+  expect(['1h', '24h', '7d'].includes(flow.window), 'wallet-flow window invalid');
+  expect(typeof flow.walletCount === 'number', 'wallet-flow walletCount must be number');
+  expect(typeof flow.smartWalletCount === 'number', 'wallet-flow smartWalletCount must be number');
+  expect(typeof flow.buyVolume === 'number', 'wallet-flow buyVolume must be number');
+  expect(typeof flow.sellVolume === 'number', 'wallet-flow sellVolume must be number');
+  expect(typeof flow.netVolume === 'number', 'wallet-flow netVolume must be number');
+  expect(['YES', 'NO', 'mixed', 'unknown'].includes(flow.netDirection), 'wallet-flow netDirection invalid');
+  expect(Array.isArray(flow.largeTrades), 'wallet-flow largeTrades must be an array');
+  expect(response.json.metadata?.source === 'polymarket', 'wallet-flow source must be polymarket');
+  expect(typeof response.json.metadata?.processing_time_ms === 'number', 'wallet-flow processing_time_ms must be number');
+  expect(typeof response.json.metadata?.cached === 'boolean', 'wallet-flow cached must be boolean');
 }
 
 function validateFeedResponse(response: HttpResult): void {

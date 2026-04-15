@@ -33,8 +33,13 @@ export type Platform = 'polymarket' | 'kalshi';
 
 // Import feed types
 export type { AnalyzedTweet, TwitterAccount, GetFeedOptions } from '../types/feed';
-export type { WalletActivity, WalletPosition } from '../types/wallet';
-import type { WalletActivity, WalletPosition } from '../types/wallet';
+export type { MarketWalletFlow, SmartMoneyMarket, WalletActivity, WalletPosition } from '../types/wallet';
+import type {
+  MarketWalletFlow,
+  SmartMoneyMarket,
+  WalletActivity,
+  WalletPosition,
+} from '../types/wallet';
 
 export interface Market {
   id: string;
@@ -130,6 +135,32 @@ export interface GetWalletPositionsOptions {
   /** Current-value filter. */
   minValue?: number;
   /** Max position rows to request. */
+  limit?: number;
+}
+
+export interface GetMarketWalletFlowOptions {
+  /** Musashi market id. */
+  marketId?: string;
+  /** Polymarket condition id. */
+  conditionId?: string;
+  /** Polymarket token id. */
+  tokenId?: string;
+  /** Text used to resolve a market. */
+  query?: string;
+  /** Aggregation window. */
+  window?: '1h' | '24h' | '7d';
+  /** Activity row limit. */
+  limit?: number;
+}
+
+export interface GetSmartMoneyMarketsOptions {
+  /** Optional Musashi category filter. */
+  category?: string;
+  /** Ranking time window. */
+  window?: '1h' | '24h' | '7d';
+  /** Minimum total wallet-flow volume. */
+  minVolume?: number;
+  /** Max ranked markets to return. */
   limit?: number;
 }
 
@@ -344,6 +375,50 @@ export class MusashiAgent {
     }
 
     return response.data.positions;
+  }
+
+  /**
+   * Get recent public wallet flow for a market.
+   *
+   * @param options - Market identity and flow filters.
+   */
+  async getMarketWalletFlow(options: GetMarketWalletFlowOptions): Promise<MarketWalletFlow> {
+    const params = new URLSearchParams();
+    if (options.marketId) params.set('marketId', options.marketId);
+    if (options.conditionId) params.set('conditionId', options.conditionId);
+    if (options.tokenId) params.set('tokenId', options.tokenId);
+    if (options.query) params.set('query', options.query);
+    if (options.window) params.set('window', options.window);
+    if (options.limit) params.set('limit', options.limit.toString());
+
+    const response = await this.request(`/api/markets/wallet-flow?${params.toString()}`);
+
+    if (!response.success) {
+      throw new Error(response.error || 'Failed to fetch market wallet flow');
+    }
+
+    return response.data.flow;
+  }
+
+  /**
+   * Get markets ranked by recent smart-wallet flow.
+   *
+   * @param options - Ranking filters.
+   */
+  async getSmartMoneyMarkets(options?: GetSmartMoneyMarketsOptions): Promise<SmartMoneyMarket[]> {
+    const params = new URLSearchParams();
+    if (options?.category) params.set('category', options.category);
+    if (options?.window) params.set('window', options.window);
+    if (options?.minVolume !== undefined) params.set('minVolume', options.minVolume.toString());
+    if (options?.limit) params.set('limit', options.limit.toString());
+
+    const response = await this.request(`/api/markets/smart-money?${params.toString()}`);
+
+    if (!response.success) {
+      throw new Error(response.error || 'Failed to fetch smart-money markets');
+    }
+
+    return response.data.markets;
   }
 
   /**
@@ -749,6 +824,30 @@ export async function getWalletPositions(
 ): Promise<WalletPosition[]> {
   const agent = new MusashiAgent();
   return agent.getWalletPositions(wallet, options);
+}
+
+/**
+ * Quick helper to get market wallet flow without creating an agent instance.
+ *
+ * @param options - Market identity and flow filters.
+ */
+export async function getMarketWalletFlow(
+  options: GetMarketWalletFlowOptions
+): Promise<MarketWalletFlow> {
+  const agent = new MusashiAgent();
+  return agent.getMarketWalletFlow(options);
+}
+
+/**
+ * Quick helper to get smart-money market rankings without creating an agent instance.
+ *
+ * @param options - Ranking filters.
+ */
+export async function getSmartMoneyMarkets(
+  options?: GetSmartMoneyMarketsOptions
+): Promise<SmartMoneyMarket[]> {
+  const agent = new MusashiAgent();
+  return agent.getSmartMoneyMarkets(options);
 }
 
 // Export default instance for convenience

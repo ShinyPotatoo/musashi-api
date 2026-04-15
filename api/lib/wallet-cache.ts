@@ -5,7 +5,12 @@
  * shared short-lived wallet intelligence responses.
  */
 
-import type { MarketWalletFlow, WalletActivity, WalletPosition } from '../../src/types/wallet';
+import type {
+  MarketWalletFlow,
+  SmartMoneyMarket,
+  WalletActivity,
+  WalletPosition,
+} from '../../src/types/wallet';
 import { kv, setKvWithTtl } from './vercel-kv';
 
 export const WALLET_ACTIVITY_TTL_SECONDS = parsePositiveInt(
@@ -39,18 +44,6 @@ export interface WalletCacheHit<T> {
   cached: boolean;
   cached_at: string | null;
   cache_age_seconds: number | null;
-}
-
-export interface SmartMoneyMarket {
-  marketId?: string;
-  conditionId?: string;
-  tokenId?: string;
-  marketTitle?: string;
-  marketSlug?: string;
-  category?: string;
-  url?: string;
-  score: number;
-  flow: MarketWalletFlow;
 }
 
 const memoryCache = new Map<string, {

@@ -53,6 +53,8 @@ import feedStatsHandler from '../api/feed/stats';
 import feedAccountsHandler from '../api/feed/accounts';
 import arbitrageHandler from '../api/markets/arbitrage';
 import moversHandler from '../api/markets/movers';
+import smartMoneyHandler from '../api/markets/smart-money';
+import marketWalletFlowHandler from '../api/markets/wallet-flow';
 import walletActivityHandler from '../api/wallet/activity';
 import walletPositionsHandler from '../api/wallet/positions';
 
@@ -71,6 +73,8 @@ const ROUTES = new Map<string, Handler>([
   ['/api/feed/accounts', feedAccountsHandler],
   ['/api/markets/arbitrage', arbitrageHandler],
   ['/api/markets/movers', moversHandler],
+  ['/api/markets/smart-money', smartMoneyHandler],
+  ['/api/markets/wallet-flow', marketWalletFlowHandler],
   ['/api/wallet/activity', walletActivityHandler],
   ['/api/wallet/positions', walletPositionsHandler],
 ]);
