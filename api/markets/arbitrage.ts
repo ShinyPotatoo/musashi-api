@@ -1,9 +1,10 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
+import { getArbitrage, getMarketMetadata } from '../lib/market-cache';
 
-//To ensure function doesnt time out
 export const config = {
   maxDuration: 30,
 };
+const ARB_V15_ENABLED = process.env.ARB_V15_ENABLED !== '0';
 
 export default async function handler(
   req: VercelRequest,
@@ -33,59 +34,161 @@ export default async function handler(
   const startTime = Date.now();
 
   try {
-    // Parse query parameters
     const {
       mode = 'fast',
       maxDataAgeMs,
       minNetEdgeBps,
-      minSpread,
+      minSpread = '0.03',
+      minConfidence = '0.5',
       limit = '20',
+      category,
     } = req.query;
 
-    let effectiveMinBps = minNetEdgeBps ? Number(minNetEdgeBps) : Math.round(parseFloat(minSpread as string) * 10000);
-    if (minNetEdgeBps) {
-      effectiveMinBps = Number(minNetEdgeBps);
-    } else {
-      effectiveMinBps = Math.round(parseFloat(minSpread as string) * 10000);
+    const parsedMinSpread = parseFloat(minSpread as string);
+    const parsedMinConfidence = parseFloat(minConfidence as string);
+    const parsedLimit = parseInt(limit as string, 10);
+    const parsedMaxDataAgeMs = maxDataAgeMs !== undefined ? Number(maxDataAgeMs) : undefined;
+
+    if (Number.isNaN(parsedMinSpread) || parsedMinSpread < 0 || parsedMinSpread > 1) {
+      res.status(400).json({ success: false, error: 'Invalid minSpread. Must be between 0 and 1.' });
+      return;
+    }
+    if (Number.isNaN(parsedMinConfidence) || parsedMinConfidence < 0 || parsedMinConfidence > 1) {
+      res.status(400).json({ success: false, error: 'Invalid minConfidence. Must be between 0 and 1.' });
+      return;
+    }
+    if (Number.isNaN(parsedLimit) || parsedLimit < 1 || parsedLimit > 100) {
+      res.status(400).json({ success: false, error: 'Invalid limit. Must be between 1 and 100.' });
+      return;
+    }
+    if (!['fast', 'full'].includes(mode as string)) {
+      res.status(400).json({ success: false, error: 'Invalid mode. Must be fast or full.' });
+      return;
+    }
+    if (parsedMaxDataAgeMs !== undefined && (!Number.isFinite(parsedMaxDataAgeMs) || parsedMaxDataAgeMs < 0)) {
+      res.status(400).json({ success: false, error: 'Invalid maxDataAgeMs. Must be greater than or equal to 0.' });
+      return;
     }
 
-    const minConfidenceNum = parseFloat(minConfidence as string);
-    const limitNum = Math.min(parseInt(limit as string, 10), 100);
+    let effectiveMinBps = Math.round(parsedMinSpread * 10000);
+    if (minNetEdgeBps !== undefined) {
+      effectiveMinBps = Number(minNetEdgeBps);
+      if (!Number.isFinite(effectiveMinBps) || effectiveMinBps < 0) {
+        res.status(400).json({ success: false, error: 'Invalid minNetEdgeBps. Must be greater than or equal to 0.' });
+        return;
+      }
+    }
 
     const opportunities = await getArbitrage(effectiveMinBps);
+    const freshness = getMarketMetadata();
 
-    if (category || minConfidenceNum > 0) {
-      opportunities = opportunities.filter(arb => {
+    if (parsedMaxDataAgeMs !== undefined && freshness.data_age_seconds * 1000 > parsedMaxDataAgeMs) {
+      res.status(200).json({
+        success: true,
+        data: {
+          opportunities: [],
+          count: 0,
+          timestamp: new Date().toISOString(),
+          filters: {
+            mode,
+            minSpread: parsedMinSpread,
+            minNetEdgeBps: effectiveMinBps,
+            minConfidence: parsedMinConfidence,
+            limit: parsedLimit,
+            category: category || null,
+            maxDataAgeMs: parsedMaxDataAgeMs,
+          },
+        },
+        metadata: {
+          processing_time_ms: Date.now() - startTime,
+          data_age_seconds: freshness.data_age_seconds,
+          fetched_at: freshness.fetched_at,
+          mode,
+          degraded: true,
+          stale_reason: 'data_age_exceeded',
+          sources: freshness.sources,
+        },
+      });
+      return;
+    }
+
+    let filtered = opportunities;
+    if (category || parsedMinConfidence > 0) {
+      filtered = filtered.filter(arb => {
         const matchesCat = !category ||
           arb.polymarket.category === category ||
           arb.kalshi.category === category;
-        const matchesConf = arb.confidence >= minConfidenceNum;
+        const matchesConf = arb.confidence >= parsedMinConfidence;
         return matchesCat && matchesConf;
       });
     }
 
-    const result = opportunities.slice(0, limitNum);
-    const freshness = getMarketMetadata();
-// Item 1: Max Data Age Enforcement
-  if (maxDataAgeMs && freshness.data_age_seconds * 1000 > Number(maxDataAgeMs)) {
-    return res.status(200).json({ success: true, data: { opportunities: [], count: 0 }, metadata: { degraded: true }});
-  }
+    filtered = filtered.sort((a, b) => {
+      if (b.netEdgeBps !== a.netEdgeBps) return b.netEdgeBps - a.netEdgeBps;
+      if (b.confidence !== a.confidence) return b.confidence - a.confidence;
+      const aKey = `${a.polymarket.id}|${a.kalshi.id}`;
+      const bKey = `${b.polymarket.id}|${b.kalshi.id}`;
+      return aKey.localeCompare(bKey);
+    });
 
-  // Item 2: Mode Payload Stripping
-  let finalOpps = opportunities.slice(0, Number(limit));
-  if (mode === 'fast') {
-    finalOpps = finalOpps.map(o => ({
-      pair: `${o.polymarket.id}:${o.kalshi.id}`,
-      netEdgeBps: o.netEdgeBps,
-      buy: o.buyVenue,
-      sell: o.sellVenue,
-      confidence: o.matchConfidence.score
+    const result = filtered.slice(0, parsedLimit);
+
+    const payloadOpportunities = (ARB_V15_ENABLED && mode === 'fast'
+      ? result.map((o) => ({
+          buyVenue: o.buyVenue,
+          sellVenue: o.sellVenue,
+          buyPrice: o.buyPrice,
+          sellPrice: o.sellPrice,
+          netEdgeBps: o.netEdgeBps,
+          estimatedFeesBps: o.estimatedFeesBps,
+          slippageBps: o.slippageBps,
+          latencyRiskBps: o.latencyRiskBps,
+          matchConfidence: o.matchConfidence.score,
+          expiryDeltaMinutes: o.expiryDeltaMinutes,
+          liquidityScore: o.liquidityScore,
+          sourceTimestamps: o.sourceTimestamps,
+          asOfTs: o.asOfTs,
+        }))
+      : result);
+
+    console.log(JSON.stringify({
+      event: 'arb_req',
+      duration_ms: Date.now() - startTime,
+      mode,
+      count: payloadOpportunities.length,
+      data_age_seconds: freshness.data_age_seconds,
     }));
+
+    res.status(200).json({
+      success: true,
+      data: {
+        opportunities: payloadOpportunities,
+        count: payloadOpportunities.length,
+        timestamp: new Date().toISOString(),
+        filters: {
+          mode,
+          v15_enabled: ARB_V15_ENABLED,
+          minSpread: parsedMinSpread,
+          minNetEdgeBps: effectiveMinBps,
+          minConfidence: parsedMinConfidence,
+          limit: parsedLimit,
+          category: category || null,
+          maxDataAgeMs: parsedMaxDataAgeMs ?? null,
+        },
+      },
+      metadata: {
+        processing_time_ms: Date.now() - startTime,
+        data_age_seconds: freshness.data_age_seconds,
+        fetched_at: freshness.fetched_at,
+        mode,
+        sources: freshness.sources,
+      },
+    });
+  } catch (error) {
+    console.error('[Arbitrage API] Error:', error);
+    res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : 'Internal server error',
+    });
   }
-
-  // Item 16: Log JSON for Observability
-  console.log(JSON.stringify({ event: 'arb_req', duration: Date.now() - startTime, count: finalOpps.length }));
-
-  return res.status(200).json({ success: true, metadata: { ...freshness, mode }, data: finalOpps });
-}
 }

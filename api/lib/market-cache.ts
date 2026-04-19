@@ -8,8 +8,8 @@ import { Market, ArbitrageOpportunity } from '../../src/types/market';
 import { fetchPolymarkets } from '../../src/api/polymarket-client';
 import { fetchKalshiMarkets } from '../../src/api/kalshi-client';
 import { detectArbitrage } from '../../src/api/arbitrage-detector';
-import { FreshnessMetadata, SourceStatus } from './types';
-import { kv } from '@vercel/kv';
+import { FreshnessMetadata } from './types';
+import { kv, setKvWithTtl } from './vercel-kv';
 
 // In-memory cache for markets
 // Default: 20 seconds (configurable via MARKET_CACHE_TTL_SECONDS env var)
@@ -38,14 +38,24 @@ let kalshiError: string | null = null;
 // Stage 0 Session 2: Per-source timeout (5 seconds)
 const SOURCE_TIMEOUT_MS = 5000;
 
-// Constants for fetch limits
-const POLYMARKET_TARGET_COUNT = 100;
-const POLYMARKET_MAX_PAGES = 3;
-const KALSHI_TARGET_COUNT = 100;
-const KALSHI_MAX_PAGES = 3;
+const POLYMARKET_TARGET_COUNT = parsePositiveInt(process.env.MUSASHI_POLYMARKET_TARGET_COUNT, 1200);
+const POLYMARKET_MAX_PAGES = parsePositiveInt(process.env.MUSASHI_POLYMARKET_MAX_PAGES, 20);
+const KALSHI_TARGET_COUNT = parsePositiveInt(process.env.MUSASHI_KALSHI_TARGET_COUNT, 1000);
+const KALSHI_MAX_PAGES = parsePositiveInt(process.env.MUSASHI_KALSHI_MAX_PAGES, 20);
+const ARB_SHARED_CACHE_ENABLED = process.env.ARB_SHARED_CACHE_ENABLED === '1';
+const SHARED_ARB_CACHE_KEY = 'arb:v15:opportunities';
+const SHARED_ARB_LOCK_KEY = 'arb:v15:refresh_lock';
+const SHARED_ARB_LOCK_TTL_SECONDS = 15;
+const SHARED_ARB_CACHE_TTL_SECONDS = Math.max(Math.floor(ARB_CACHE_TTL_MS / 1000), 3);
 
-const LOCK_KEY = 'arb_recompute_lock';
-const LOCK_TTL = 20000;
+function logCacheEvent(event: string, payload: Record<string, unknown> = {}): void {
+  console.log(JSON.stringify({ event, ...payload, ts: new Date().toISOString() }));
+}
+
+function parsePositiveInt(value: string | undefined, fallback: number): number {
+  const parsed = Number.parseInt(value ?? '', 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
 
 function withTimeout<T>(
   promise: Promise<T>,
@@ -73,6 +83,7 @@ export async function getMarkets(): Promise<Market[]> {
 
   // Return cached if fresh
   if (cachedMarkets.length > 0 && (now - cacheTimestamp) < CACHE_TTL_MS) {
+    logCacheEvent('markets_cache_hit', { cached_count: cachedMarkets.length, age_ms: now - cacheTimestamp });
     return cachedMarkets;
   }
 
@@ -122,6 +133,11 @@ export async function getMarkets(): Promise<Market[]> {
 
       cachedMarkets = [...polyMarkets, ...kalshiMarkets];
       cacheTimestamp = currentFetchTime;
+      logCacheEvent('markets_cache_refresh', {
+        total_count: cachedMarkets.length,
+        polymarket_count: polyMarkets.length,
+        kalshi_count: kalshiMarkets.length,
+      });
       
       return cachedMarkets;
     } finally {
@@ -178,28 +194,77 @@ export function getMarketMetadata(): FreshnessMetadata {
  */
 export async function getArbitrage(minNetEdgeBps: number = 50): Promise<ArbitrageOpportunity[]> {
   const now = Date.now();
-  
-  // Distributed Lock Pattern
-  if (cachedArbitrage.length === 0 || (now - arbCacheTimestamp) >= ARB_CACHE_TTL_MS) {
-    const instanceId = Math.random().toString(36);
-    const locked = await kv.set(LOCK_KEY, instanceId, { nx: true, ex: 30 });
 
-    if (locked) {
+  if (arbRefreshPromise) {
+    const opportunities = await arbRefreshPromise;
+    return opportunities.filter((arb) => (arb.netEdgeBps ?? 0) >= minNetEdgeBps);
+  }
+
+  if (cachedArbitrage.length === 0 || (now - arbCacheTimestamp) >= ARB_CACHE_TTL_MS) {
+    arbRefreshPromise = (async () => {
       try {
+        if (ARB_SHARED_CACHE_ENABLED) {
+          const shared = await kv.get<ArbitrageOpportunity[]>(SHARED_ARB_CACHE_KEY);
+          if (shared && shared.length > 0) {
+            cachedArbitrage = shared;
+            arbCacheTimestamp = Date.now();
+            logCacheEvent('arb_shared_cache_hit', { shared_count: shared.length });
+            return cachedArbitrage;
+          }
+        }
+
+        let acquiredLock = false;
+        if (ARB_SHARED_CACHE_ENABLED) {
+          try {
+            const lockResult = await (kv as any).set(SHARED_ARB_LOCK_KEY, `holder-${Date.now()}`, {
+              nx: true,
+              ex: SHARED_ARB_LOCK_TTL_SECONDS,
+            });
+            acquiredLock = lockResult === 'OK' || lockResult === true;
+          } catch {
+            acquiredLock = false;
+          }
+        }
+
+        if (ARB_SHARED_CACHE_ENABLED && !acquiredLock) {
+          await new Promise((resolve) => setTimeout(resolve, 80));
+          const sharedAfterWait = await kv.get<ArbitrageOpportunity[]>(SHARED_ARB_CACHE_KEY);
+          if (sharedAfterWait && sharedAfterWait.length > 0) {
+            cachedArbitrage = sharedAfterWait;
+            arbCacheTimestamp = Date.now();
+            logCacheEvent('arb_shared_cache_wait_hit', { shared_count: sharedAfterWait.length });
+            return cachedArbitrage;
+          }
+        }
+
         const markets = await getMarkets();
         cachedArbitrage = detectArbitrage(markets, 10);
         arbCacheTimestamp = Date.now();
-        // Sync to Redis for other lambdas
-        await kv.set('global_arb_cache', cachedArbitrage, { ex: 60 });
+        logCacheEvent('arb_cache_refresh', { computed_count: cachedArbitrage.length });
+        if (ARB_SHARED_CACHE_ENABLED) {
+          await setKvWithTtl(SHARED_ARB_CACHE_KEY, SHARED_ARB_CACHE_TTL_SECONDS, cachedArbitrage);
+          await kv.del(SHARED_ARB_LOCK_KEY);
+        }
+        return cachedArbitrage;
       } finally {
-        await kv.del(LOCK_KEY);
+        arbRefreshPromise = null;
       }
-    } else {
-      // If locked by another instance try to read their global cache
-      const remote = await kv.get<ArbitrageOpportunity[]>('global_arb_cache');
-      if (remote) return remote.filter(a => a.netEdgeBps >= minNetEdgeBps);
-    }
+    })();
+    await arbRefreshPromise;
   }
 
-  return cachedArbitrage.filter(arb => arb.netEdgeBps >= minNetEdgeBps);
+  return cachedArbitrage.filter((arb) => (arb.netEdgeBps ?? 0) >= minNetEdgeBps);
+}
+
+export function getArbitrageCacheMetadata(): {
+  cached_count: number;
+  cache_age_ms: number | null;
+  refreshed_at: string | null;
+} {
+  const cacheAge = arbCacheTimestamp > 0 ? Date.now() - arbCacheTimestamp : null;
+  return {
+    cached_count: cachedArbitrage.length,
+    cache_age_ms: cacheAge,
+    refreshed_at: arbCacheTimestamp > 0 ? new Date(arbCacheTimestamp).toISOString() : null,
+  };
 }

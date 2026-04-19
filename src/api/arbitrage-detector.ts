@@ -3,26 +3,18 @@
 
 import { Market, ArbitrageOpportunity } from '../types/market';
 
-const FEES_BPS = Number(process.env.ARB_FEE_BPS || 20);
+declare const process: {
+  env: Record<string, string | undefined>;
+};
+
+const FEE_POLY_BPS = Number(process.env.ARB_POLY_FEE_BPS || process.env.ARB_FEE_BPS || 20);
+const FEE_KALSHI_BPS = Number(process.env.ARB_KALSHI_FEE_BPS || process.env.ARB_FEE_BPS || 20);
 const SLIPPAGE_BPS = Number(process.env.ARB_SLIPPAGE_BPS || 10);
 const LATENCY_BPS = Number(process.env.ARB_LATENCY_BPS || 5);
-
-/**
- * V1.5 Net Edge Calculator
- * Converts raw prices into tradable Basis Points (bps)
- */
-function calculateNedEdge(buyPrice: number, sellPrice: number) {
-  const grossEdge = sellPrice - buyPrice;
-  const grossBps = (grossEdge / buyPrice) * 10000;
-
-  const totalCosts = FEES_BPS + SLIPPAGE_BPS + LATENCY_BPS;
-  const netEdgeBps = grossBps - totalCosts;
-
-  return {
-    grossBps: Math.round(grossBps),
-    netEdgeBps: Math.round(netEdgeBps)
-  };
-}
+const MIN_VOLUME_FLOOR = Number(process.env.ARB_MIN_VOL || 500);
+const ARB_V15_ENABLED = process.env.ARB_V15_ENABLED !== '0';
+const ARB_NET_EDGE_ENABLED = process.env.ARB_NET_EDGE_ENABLED !== '0';
+const ARB_STRICT_MATCH_ENABLED = process.env.ARB_STRICT_MATCH_ENABLED !== '0';
 
 /**
  * & Helper to group markets by category for faster scanning (O(N) vs O(N*M))
@@ -120,6 +112,8 @@ function calculateKeywordOverlap(market1: Market, market2: Market): number {
 function areMarketsSimilar(poly: Market, kalshi: Market): {
   isSimilar: boolean;
   confidence: number;
+  titleSim: number;
+  keywordOverlap: number;
   reason: string;
 } {
   // Must be in the same category (or one is 'other')
@@ -128,7 +122,13 @@ function areMarketsSimilar(poly: Market, kalshi: Market): {
                        kalshi.category === 'other';
 
   if (!categoryMatch) {
-    return { isSimilar: false, confidence: 0, reason: 'Different categories' };
+    return {
+      isSimilar: false,
+      confidence: 0,
+      titleSim: 0,
+      keywordOverlap: 0,
+      reason: 'Different categories',
+    };
   }
 
   // Calculate title similarity
@@ -138,14 +138,18 @@ function areMarketsSimilar(poly: Market, kalshi: Market): {
   const keywordOverlap = calculateKeywordOverlap(poly, kalshi);
 
   // Matching criteria (needs at least one strong signal):
-  // 1. High title similarity (>0.6) OR
+  // 1. High title similarity OR
   // 2. Strong keyword overlap (3+ shared keywords)
+  const titleThreshold = ARB_STRICT_MATCH_ENABLED ? 0.6 : 0.5;
+  const entityThreshold = ARB_STRICT_MATCH_ENABLED ? 0.35 : 0.3;
 
-  if (titleSim > 0.6) {
+  if (titleSim > titleThreshold) {
     return {
       isSimilar: true,
       confidence: titleSim,
-      reason: `High title similarity (${(titleSim * 100).toFixed(0)}%)`
+      titleSim,
+      keywordOverlap,
+      reason: `High title similarity (${(titleSim * 100).toFixed(0)}%)`,
     };
   }
 
@@ -154,7 +158,9 @@ function areMarketsSimilar(poly: Market, kalshi: Market): {
     return {
       isSimilar: true,
       confidence,
-      reason: `${keywordOverlap} shared keywords`
+      titleSim,
+      keywordOverlap,
+      reason: `${keywordOverlap} shared keywords`,
     };
   }
 
@@ -163,20 +169,32 @@ function areMarketsSimilar(poly: Market, kalshi: Market): {
   const kalshiEntities = extractEntities(kalshi.title);
   const sharedEntities = Array.from(polyEntities).filter(e => kalshiEntities.has(e));
 
-  if (sharedEntities.length >= 2 && titleSim > 0.35) {
+  if (sharedEntities.length >= 2 && titleSim > entityThreshold) {
     return {
       isSimilar: true,
       confidence: 0.7,
-      reason: `Shared entities: ${sharedEntities.slice(0, 3).join(', ')}`
+      titleSim,
+      keywordOverlap,
+      reason: `Shared entities: ${sharedEntities.slice(0, 3).join(', ')}`,
     };
   }
 
-  return { isSimilar: false, confidence: 0, reason: 'Insufficient similarity' };
+  return {
+    isSimilar: false,
+    confidence: 0,
+    titleSim,
+    keywordOverlap,
+    reason: 'Insufficient similarity',
+  };
 }
 
-const FEE_POLY_BPS = Number(process.env.ARB_POLY_FEE_BPS || 20);
-const FEE_KALSHI_BPS = Number(process.env.ARB_KALSHI_FEE_BPS || 15);
-const SLIPPAGE_BPS = Number(process.env.ARB_SLIPPAGE_BPS || 10);
+function safePriceForBuy(market: Market): number {
+  return market.yesAsk ?? market.yesPrice;
+}
+
+function safePriceForSell(market: Market): number {
+  return market.yesBid ?? market.yesPrice;
+}
 
 /**
  * Detect arbitrage opportunities
@@ -185,7 +203,7 @@ const SLIPPAGE_BPS = Number(process.env.ARB_SLIPPAGE_BPS || 10);
  * @param minNetEdgeBps - Minimum basis points profit (default, 50bps/0.5%)
  */
 export function detectArbitrage(
-  markets: Market[], 
+  markets: Market[],
   minNetEdgeBps: number = 10
 ): ArbitrageOpportunity[] {
   const opportunities: ArbitrageOpportunity[] = [];
@@ -204,24 +222,27 @@ export function detectArbitrage(
           if (expiryDeltaMinutes > 1440) continue;
         }
 
-        const sim = areMarketsSimilar(poly, kalshi);
-        if (!sim.isSimilar) continue;
+        const similarity = areMarketsSimilar(poly, kalshi);
+        if (!similarity.isSimilar) continue;
 
         // Executable Edge (Buy at Ask, Sell at Bid)
-        const polyBuy = poly.yesAsk ?? poly.yesPrice;
-        const polySell = poly.yesBid ?? poly.yesPrice;
-        const kalshiBuy = kalshi.yesAsk ?? kalshi.yesPrice;
-        const kalshiSell = kalshi.yesBid ?? kalshi.yesPrice;
+        const polyBuy = ARB_V15_ENABLED ? (poly.yesAsk ?? poly.yesPrice) : poly.yesPrice;
+        const polySell = ARB_V15_ENABLED ? (poly.yesBid ?? poly.yesPrice) : poly.yesPrice;
+        const kalshiBuy = ARB_V15_ENABLED ? (kalshi.yesAsk ?? kalshi.yesPrice) : kalshi.yesPrice;
+        const kalshiSell = ARB_V15_ENABLED ? (kalshi.yesBid ?? kalshi.yesPrice) : kalshi.yesPrice;
 
         const edgePolyBuy = kalshiSell - polyBuy;
         const edgeKalshiBuy = polySell - kalshiBuy;
 
-        const isPolyCheaper = edgePolyBuy > edgeKalshiBuy;
-        const buyPrice = isPolyCheaper ? polyBuy : kalshiBuy;
-        const sellPrice = isPolyCheaper ? kalshiSell : polySell;
+        const isPolyCheaper = edgePolyBuy >= edgeKalshiBuy;
+        const buyPrice = isPolyCheaper ? safePriceForBuy(poly) : safePriceForBuy(kalshi);
+        const sellPrice = isPolyCheaper ? safePriceForSell(kalshi) : safePriceForSell(poly);
+        if (buyPrice <= 0 || sellPrice <= 0 || sellPrice <= buyPrice) continue;
         
         // Summed Venue Fees
-        const totalFees = FEE_POLY_BPS + FEE_KALSHI_BPS + SLIPPAGE_BPS;
+        const totalFees = ARB_NET_EDGE_ENABLED
+          ? (FEE_POLY_BPS + FEE_KALSHI_BPS + SLIPPAGE_BPS + LATENCY_BPS)
+          : 0;
         const grossBps = ((sellPrice - buyPrice) / buyPrice) * 10000;
         const netEdge = grossBps - totalFees;
 
@@ -229,31 +250,40 @@ export function detectArbitrage(
 
         // Real Liquidity Score
         const combinedVol = (poly.volume24h || 0) + (kalshi.volume24h || 0);
-        if (combinedVol < Number(process.env.ARB_MIN_VOL || 500)) continue;
+        if (combinedVol < MIN_VOLUME_FLOOR) continue;
 
         opportunities.push({
           polymarket: poly,
-          kalshi: kalshi,
+          kalshi,
           buyPrice,
           sellPrice,
           buyVenue: isPolyCheaper ? 'polymarket' : 'kalshi',
           sellVenue: isPolyCheaper ? 'kalshi' : 'polymarket',
           netEdgeBps: Math.round(netEdge),
           grossEdgeBps: Math.round(grossBps),
+          estimatedFeesBps: FEE_POLY_BPS + FEE_KALSHI_BPS,
+          slippageBps: SLIPPAGE_BPS,
+          latencyRiskBps: LATENCY_BPS,
+          confidence: similarity.confidence,
+          matchReason: similarity.reason,
+          spread: sellPrice - buyPrice,
+          profitPotential: sellPrice - buyPrice,
+          direction: isPolyCheaper ? 'buy_poly_sell_kalshi' : 'buy_kalshi_sell_poly',
           matchConfidence: {
-            score: sim.confidence,
-            titleSimilarity: sim.titleSim,
-            keywordOverlap: sim.keywordOverlap,
+            score: similarity.confidence,
+            titleSimilarity: similarity.titleSim,
+            keywordOverlap: similarity.keywordOverlap,
             categoryAligned: true,
-            expiryAligned: (expiryDeltaMinutes || 0) < 60
+            expiryAligned: (expiryDeltaMinutes || 0) < 60,
+            liquidityAligned: combinedVol >= MIN_VOLUME_FLOOR,
           },
           sourceTimestamps: {
             polymarket: poly.lastUpdated || null,
-            kalshi: kalshi.lastUpdated || null
+            kalshi: kalshi.lastUpdated || null,
           },
           expiryDeltaMinutes,
           asOfTs: new Date().toISOString(),
-          liquidityScore: Math.min(combinedVol / 10000, 1)
+          liquidityScore: Math.min(combinedVol / 10000, 1),
         });
       }
     }

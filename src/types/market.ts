@@ -4,15 +4,20 @@ export interface Market {
   id: string;
   platform: 'kalshi' | 'polymarket';
   title: string;
-  category: string;
-  yesPrice: number; // 0.0 to 1.0 (0.65 = 65%)
-  yesBid?: number; 
-  yesAsk?: number;
-  volume24h: number; // 24h trading volume in dollars
-  liquidity?: number;
-  endDate?: string; // ISO date string (e.g. "2026-03-31")
+  description: string;
   keywords: string[];
-  lastUpdated?: string; // ISO timestamp
+  yesPrice: number; // 0.0 to 1.0 (0.65 = 65%)
+  noPrice: number;  // 0.0 to 1.0 (0.35 = 35%)
+  volume24h: number; // 24h trading volume in dollars
+  url: string;
+  category: string;
+  lastUpdated: string; // ISO timestamp
+  yesBid?: number;
+  yesAsk?: number;
+  liquidity?: number;
+  numericId?: string;          // Polymarket numeric ID for live price polling
+  oneDayPriceChange?: number;  // 24h price delta for YES (e.g. 0.05 = +5%)
+  endDate?: string; // ISO date string (e.g. "2026-03-31")
 }
 
 export interface MarketMatch {
@@ -22,21 +27,29 @@ export interface MarketMatch {
 }
 
 export interface ArbitrageOpportunity {
-
-polymarket: Market;
+  polymarket: Market;
   kalshi: Market;
   buyPrice: number;
   sellPrice: number;
-  buyVenue: string;
-  sellVenue: string;
+  buyVenue: 'polymarket' | 'kalshi';
+  sellVenue: 'polymarket' | 'kalshi';
   netEdgeBps: number;
   grossEdgeBps: number;
+  estimatedFeesBps: number;
+  slippageBps: number;
+  latencyRiskBps: number;
+  confidence: number; // Backward-compatible alias used by existing callers
+  matchReason: string; // Backward-compatible reasoning string
+  spread: number; // Backward-compatible spread proxy
+  profitPotential: number; // Backward-compatible expected profit proxy
+  direction: 'buy_poly_sell_kalshi' | 'buy_kalshi_sell_poly'; // Backward-compatible direction
   matchConfidence: {
     score: number;
     titleSimilarity: number;
     keywordOverlap: number;
     categoryAligned: boolean;
     expiryAligned: boolean;
+    liquidityAligned?: boolean;
   };
   sourceTimestamps: {
     polymarket: string | null;
