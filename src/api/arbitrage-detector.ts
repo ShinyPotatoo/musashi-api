@@ -138,10 +138,10 @@ function areMarketsSimilar(poly: Market, kalshi: Market): {
   const keywordOverlap = calculateKeywordOverlap(poly, kalshi);
 
   // Matching criteria (needs at least one strong signal):
-  // 1. High title similarity (>0.5) OR
+  // 1. High title similarity (>0.6) OR
   // 2. Strong keyword overlap (3+ shared keywords)
 
-  if (titleSim > 0.5) {
+  if (titleSim > 0.6) {
     return {
       isSimilar: true,
       confidence: titleSim,
@@ -150,7 +150,7 @@ function areMarketsSimilar(poly: Market, kalshi: Market): {
   }
 
   if (keywordOverlap >= 3) {
-    const confidence = Math.min(keywordOverlap / 10, 0.9); // Cap at 0.9
+    const confidence = Math.min(keywordOverlap / 10, 0.85); // Cap at 0.85
     return {
       isSimilar: true,
       confidence,
@@ -163,7 +163,7 @@ function areMarketsSimilar(poly: Market, kalshi: Market): {
   const kalshiEntities = extractEntities(kalshi.title);
   const sharedEntities = Array.from(polyEntities).filter(e => kalshiEntities.has(e));
 
-  if (sharedEntities.length >= 2 && titleSim > 0.3) {
+  if (sharedEntities.length >= 2 && titleSim > 0.35) {
     return {
       isSimilar: true,
       confidence: 0.7,
@@ -175,11 +175,10 @@ function areMarketsSimilar(poly: Market, kalshi: Market): {
 }
 
 /**
- * Detect arbitrage opportunities across Polymarket and Kalshi
+ * Detect arbitrage opportunities
  *
  * @param markets - Combined array of markets from both platforms
- * @param minSpread - Minimum spread to be considered an opportunity (default: 0.03 = 3%)
- * @returns Array of arbitrage opportunities sorted by spread (highest first)
+ * @param minNetEdgeBps - Minimum basis points profit (default, 50bps/0.5%)
  */
 export function detectArbitrage(
   markets: Market[],
@@ -199,7 +198,7 @@ export function detectArbitrage(
         for (const kalshi of kalshiByCat[cat]) {
         // Date Check
         if (poly.endDate && kalshi.endDate) {
-          const delta = Math.abs(new Data(poly.endDate).getTime() - new Date(kalshi.endDate).getTime());
+          const delta = Math.abs(new Date(poly.endDate).getTime() - new Date(kalshi.endDate).getTime());
           if (delta > 86400000) continue;
         }
 
@@ -207,17 +206,13 @@ export function detectArbitrage(
 
         if (!similarity.isSimilar) continue;
 
-        // Calculate spread
-        const spread = Math.abs(poly.yesPrice - kalshi.yesPrice);
-
-        if (spread < minSpread) continue;
 
         // Math
         const isPolyCheaper = poly.yesPrice < kalshi.yesPrice;
         const buyPrice = isPolyCheaper ? poly.yesPrice : kalshi.yesPrice;
         const sellPrice = isPolyCheaper ? kalshi.yesPrice : poly.yesPrice;
 
-        const { grossBps, netEdgeBps } = calculateNetEdge(buyPrice, sellPrice);
+        const { grossBps, netEdgeBps } = calculateNedEdge(buyPrice, sellPrice);
 
         if (netEdgeBps < minNetEdgeBps) continue;
 
@@ -239,8 +234,9 @@ export function detectArbitrage(
           liquidityScore: 0.5,
           expiryDeltaMinutes: poly.endDate ? Math.floor((new Date(poly.endDate).getTime() - Date.now()) / 60000) :0,
           asOfTs: new Date().toISOString(),
-
+          // Calculate spread
           spread: sellPrice - buyPrice,
+
           profitPotential: (sellPrice - buyPrice),
           direction: isPolyCheaper ? 'buy_poly_sell_kalshi' : 'buy_kalshi_sell_poly'
         });
