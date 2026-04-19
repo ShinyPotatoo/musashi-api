@@ -7,16 +7,18 @@ export interface Market {
   description: string;
   keywords: string[];
   yesPrice: number; // 0.0 to 1.0 (0.65 = 65%)
-  noPrice: number;  // 0.0 to 1.0 (0.35 = 35%)
+  noPrice: number; // 0.0 to 1.0 (0.35 = 35%)
   volume24h: number; // 24h trading volume in dollars
   url: string;
   category: string;
   lastUpdated: string; // ISO timestamp
   yesBid?: number;
   yesAsk?: number;
+  noBid?: number;
+  noAsk?: number;
   liquidity?: number;
-  numericId?: string;          // Polymarket numeric ID for live price polling
-  oneDayPriceChange?: number;  // 24h price delta for YES (e.g. 0.05 = +5%)
+  numericId?: string; // Polymarket numeric ID for live price polling
+  oneDayPriceChange?: number; // 24h price delta for YES (e.g. 0.05 = +5%)
   endDate?: string; // ISO date string (e.g. "2026-03-31")
 }
 
@@ -38,11 +40,11 @@ export interface ArbitrageOpportunity {
   estimatedFeesBps: number;
   slippageBps: number;
   latencyRiskBps: number;
-  confidence: number; // Backward-compatible alias used by existing callers
-  matchReason: string; // Backward-compatible reasoning string
-  spread: number; // Backward-compatible spread proxy
-  profitPotential: number; // Backward-compatible expected profit proxy
-  direction: 'buy_poly_sell_kalshi' | 'buy_kalshi_sell_poly'; // Backward-compatible direction
+  confidence: number;
+  matchReason: string;
+  spread: number;
+  profitPotential: number;
+  direction: 'buy_poly_sell_kalshi' | 'buy_kalshi_sell_poly';
   matchConfidence: {
     score: number;
     titleSimilarity: number;
@@ -59,4 +61,12 @@ export interface ArbitrageOpportunity {
   asOfTs: string;
   liquidityScore: number;
 
+  /** Optional bundle-reporting fields (e.g. case-study script vs upstream-style payloads). */
+  rawPriceGap?: number;
+  costPerBundle?: number;
+  feesAndSlippage?: number;
+  legs?: {
+    yes: { platform: 'polymarket' | 'kalshi'; price: number };
+    no: { platform: 'polymarket' | 'kalshi'; price: number };
+  };
 }

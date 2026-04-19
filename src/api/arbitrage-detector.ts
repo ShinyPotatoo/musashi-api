@@ -1,4 +1,4 @@
-// Cross-platform arbitrage detector
+﻿// Cross-platform arbitrage detector
 // Matches markets across Polymarket and Kalshi to find price discrepancies
 
 import { Market, ArbitrageOpportunity } from '../types/market';
@@ -17,7 +17,7 @@ const ARB_NET_EDGE_ENABLED = process.env.ARB_NET_EDGE_ENABLED !== '0';
 const ARB_STRICT_MATCH_ENABLED = process.env.ARB_STRICT_MATCH_ENABLED !== '0';
 
 /**
- * & Helper to group markets by category for faster scanning (O(N) vs O(N*M))
+ * Helper to group markets by category for faster scanning (O(N) vs O(N*M))
  */
 function groupByCategory(markets: Market[]): Record<string, Market[]> {
   return markets.reduce((acc, market) => {
