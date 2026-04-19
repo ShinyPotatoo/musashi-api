@@ -183,60 +183,71 @@ function areMarketsSimilar(poly: Market, kalshi: Market): {
  */
 export function detectArbitrage(
   markets: Market[],
-  minSpread: number = 0.03
+  minNetEdgeBps: number = 50
 ): ArbitrageOpportunity[] {
-  const opportunities: ArbitrageOpportunity[] = [];
+    const opportunities: ArbitrageOpportunity[] = [];
 
-  // Separate markets by platform
-  const polymarkets = markets.filter(m => m.platform === 'polymarket');
-  const kalshiMarkets = markets.filter(m => m.platform === 'kalshi');
+    // Separate markets by platform
+    const polyByCat = groupByCategory(markets.filter(m => m.platform === 'polymarket'));
+    const kalshiByCat = groupByCategory(markets.filter(m => m.platform === 'kalshi'));
 
-  console.log(`[Arbitrage] Checking ${polymarkets.length} Polymarket × ${kalshiMarkets.length} Kalshi markets`);
+    // Compare each Polymarket market with each Kalshi market
+    for (const cat in polyByCat) {
+      if (!kalshiByCat[cat]) continue;
 
-  // Compare each Polymarket market with each Kalshi market
-  for (const poly of polymarkets) {
-    for (const kalshi of kalshiMarkets) {
-      const similarity = areMarketsSimilar(poly, kalshi);
+      for (const poly of polyByCat[cat]) {
+        for (const kalshi of kalshiByCat[cat]) {
+        // Date Check
+        if (poly.endDate && kalshi.endDate) {
+          const delta = Math.abs(new Data(poly.endDate).getTime() - new Date(kalshi.endDate).getTime());
+          if (delta > 86400000) continue;
+        }
 
-      if (!similarity.isSimilar) continue;
+        const similarity = areMarketsSimilar(poly, kalshi);
 
-      // Calculate spread
-      const spread = Math.abs(poly.yesPrice - kalshi.yesPrice);
+        if (!similarity.isSimilar) continue;
 
-      if (spread < minSpread) continue;
+        // Calculate spread
+        const spread = Math.abs(poly.yesPrice - kalshi.yesPrice);
 
-      // Determine direction and profit potential
-      let direction: ArbitrageOpportunity['direction'];
-      let profitPotential: number;
+        if (spread < minSpread) continue;
 
-      if (poly.yesPrice < kalshi.yesPrice) {
-        // Buy on Polymarket (cheaper), sell on Kalshi (more expensive)
-        direction = 'buy_poly_sell_kalshi';
-        profitPotential = spread; // Simplified: actual profit after fees would be lower
-      } else {
-        // Buy on Kalshi (cheaper), sell on Polymarket (more expensive)
-        direction = 'buy_kalshi_sell_poly';
-        profitPotential = spread;
+        // Math
+        const isPolyCheaper = poly.yesPrice < kalshi.yesPrice;
+        const buyPrice = isPolyCheaper ? poly.yesPrice : kalshi.yesPrice;
+        const sellPrice = isPolyCheaper ? kalshi.yesPrice : poly.yesPrice;
+
+        const { grossBps, netEdgeBps } = calculateNetEdge(buyPrice, sellPrice);
+
+        if (netEdgeBps < minNetEdgeBps) continue;
+
+        // V1.5 Objects
+        opportunities.push({
+          polymarket: poly,
+          kalshi: kalshi,
+          buyPrice,
+          sellPrice,
+          buyVenue: isPolyCheaper ? 'polymarket' : 'kalshi',
+          sellVenue: isPolyCheaper ? 'kalshi' : 'polymarket',
+          netEdgeBps,
+          grossEdgeBps: grossBps,
+          estimatedFeesBps: FEES_BPS,
+          slippageBps: SLIPPAGE_BPS,
+          latencyRiskBps: LATENCY_BPS,
+          confidence: similarity.confidence,
+          matchReason: similarity.reason,
+          liquidityScore: 0.5,
+          expiryDeltaMinutes: poly.endDate ? Math.floor((new Date(poly.endDate).getTime() - Date.now()) / 60000) :0,
+          asOfTs: new Date().toISOString(),
+
+          spread: sellPrice - buyPrice,
+          profitPotential: (sellPrice - buyPrice),
+          direction: isPolyCheaper ? 'buy_poly_sell_kalshi' : 'buy_kalshi_sell_poly'
+        });
       }
-
-      opportunities.push({
-        polymarket: poly,
-        kalshi: kalshi,
-        spread,
-        profitPotential,
-        direction,
-        confidence: similarity.confidence,
-        matchReason: similarity.reason,
-      });
     }
   }
-
-  // Sort by spread (highest first)
-  opportunities.sort((a, b) => b.spread - a.spread);
-
-  console.log(`[Arbitrage] Found ${opportunities.length} opportunities (min spread: ${minSpread})`);
-
-  return opportunities;
+  return opportunities.sort((a, b) => b.netEdgeBps - a.netEdgeBps);
 }
 
 /**
@@ -246,23 +257,18 @@ export function detectArbitrage(
 export function getTopArbitrage(
   markets: Market[],
   options: {
-    minSpread?: number;
-    minConfidence?: number;
+    minNetEdgeBps?: number;
     limit?: number;
     category?: string;
   } = {}
 ): ArbitrageOpportunity[] {
   const {
-    minSpread = 0.03,
-    minConfidence = 0.5,
+    minNetEdgeBps = 50,
     limit = 20,
     category,
   } = options;
 
-  let opportunities = detectArbitrage(markets, minSpread);
-
-  // Filter by confidence
-  opportunities = opportunities.filter(op => op.confidence >= minConfidence);
+  let opportunities = detectArbitrage(markets, minNetEdgeBps);
 
   // Filter by category if specified
   if (category) {
