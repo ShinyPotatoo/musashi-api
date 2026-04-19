@@ -26,9 +26,21 @@ export interface MarketMatch {
 export interface ArbitrageOpportunity {
   polymarket: Market;
   kalshi: Market;
+  buyPrice: number;
+  sellPrice: number;
+  buyVenue: 'polymarket' | 'kalshi';
+  sellVenue: 'polymarket' | 'kalshi';
+  netEdgeBps: number;
+  grossEdgeBps: number;
+  estimatedFeesBps: number;
+  slippageBps: number;
+  latencyRiskBps: number;
+  confidence: number; // 0-1, how confident we are this is the same event
+  matchReason: string; // Why we think these are the same market
+  liquidityScore: number;
+  expiryDeltaMinutes: number;
+  asOfTs: string;
   spread: number; // Absolute price difference (e.g., 0.05 = 5%)
   profitPotential: number; // Expected profit per $1 invested
   direction: 'buy_poly_sell_kalshi' | 'buy_kalshi_sell_poly';
-  confidence: number; // 0-1, how confident we are this is the same event
-  matchReason: string; // Why we think these are the same market
 }
