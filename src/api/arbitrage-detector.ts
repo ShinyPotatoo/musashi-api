@@ -3,6 +3,38 @@
 
 import { Market, ArbitrageOpportunity } from '../types/market';
 
+const FEES_BPS = Number(process.env.ARB_FEE_BPS || 20);
+const SLIPPAGE_BPS = Number(process.env.ARB_SLIPPAGE_BPS || 10);
+const LATENCY_BPS = Number(process.env.ARB_LATENCY_BPS || 5);
+
+/**
+ * V1.5 Net Edge Calculator
+ * Converts raw prices into tradable Basis Points (bps)
+ */
+function calculateNedEdge(buyPrice: number, sellPrice: number) {
+  const grossEdge = sellPrice - buyPrice;
+  const grossBps = (grossEdge / buyPrice) * 10000;
+
+  const totalCosts = FEES_BPS + SLIPPAGE_BPS + LATENCY_BPS;
+  const netEdgeBps = grossBps - totalCosts;
+
+  return {
+    grossBps: Math.round(grossBps),
+    netEdgeBps: Math.round(netEdgeBps)
+  };
+}
+
+/**
+ & Helper to group markets by category for faster scanning (O(N) vs O(N*M))
+function groupByCategory(markets: Market[]): Record<string, Market[]> {
+  return markets.reduce((acc, market) => {
+    const cat = market.category || 'other';
+    if (!acc[cat]) acc[cat] = [];
+    acc[cat].push(market);
+    return acc;
+  }, {} as Record<string, Market[]>);
+}
+
 /**
  * Normalize a title for fuzzy matching
  * Removes punctuation, dates, common question words, normalizes spacing
